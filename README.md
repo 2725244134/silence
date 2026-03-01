@@ -15,7 +15,7 @@
 
 <!-- 徽章 (Badges) - 您可以后续替换为动态徽章服务 (如 shields.io) -->
 <img src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" alt="License">
-<img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platform">
+<img src="https://img.shields.io/badge/platform-Linux%20(Wayland)-lightgrey" alt="Platform">
 <img src="https://img.shields.io/badge/release-v1.0.0-brightgreen" alt="Release">
 <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome">
 
@@ -56,7 +56,7 @@
 <!-- 例如: <img src="assets/demo.gif" /> -->
 <p align="center"><i>(这里是应用的GIF演示图)</i></p>
 
-- **一键唤醒**: 全局快捷键 F2，随时随地开始记录。
+- **一键唤醒**: 默认全局快捷键 Alt+D（可在设置中改为 F1-F12）。
 - **实时识别**: 本地 FunASR 引擎提供高精度中文识别。
 - **智能优化**: 连接您的AI模型，自动润色、纠错、总结。
 - **无缝粘贴**: 转换完成的文本自动粘贴到您当前光标位置。
@@ -69,8 +69,10 @@
 
 ### 1. 环境要求
 - **Node.js 18+** 和 pnpm
-- **Python 3.8+** (用于运行本地FunASR服务)
-- **macOS 10.15+**, **Windows 10+**, 或 **Linux**
+- **uv** (用于管理 Python 3.11+ 环境与依赖)
+- **Linux (Wayland)**，并安装：
+  - `wl-clipboard` (`wl-copy`)
+  - `ydotool`（并确保 `ydotoold` 服务已启动）
 
 ### 2. 项目初始化
 
@@ -87,10 +89,8 @@ cd ququ
 pnpm install
 
 # 3. 安装 uv (如果尚未安装)
-# macOS/Linux:
+# Linux:
 curl -LsSf https://astral.sh/uv/install.sh | sh
-# Windows:
-# powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 # 4. 初始化 Python 环境 (uv 会自动下载 Python 3.11 和所有依赖)
 uv sync
@@ -100,6 +100,15 @@ uv run python download_models.py
 
 # 6. 启动应用!
 pnpm run dev
+
+# 7. CLI 触发听写（可选，使用应用本体）
+# 开发环境
+pnpm start -- --status
+pnpm start -- --trigger
+
+# 打包后（示例）
+./QuQu --status
+./QuQu --trigger
 ```
 
 #### 方案二：使用系统 Python
@@ -116,8 +125,7 @@ pnpm install
 
 # 3. 创建虚拟环境 (推荐)
 python3 -m venv .venv
-source .venv/bin/activate  # Linux/macOS
-# .venv\Scripts\activate   # Windows
+source .venv/bin/activate  # Linux
 
 # 4. 安装 Python 依赖
 pip install funasr modelscope torch torchaudio librosa numpy
@@ -153,6 +161,30 @@ pnpm run dev
 
 #### 常见初始化问题
 
+**问题**: 自动粘贴失败（Wayland）
+```bash
+# Debian/Ubuntu
+sudo apt install wl-clipboard ydotool
+
+# Arch
+sudo pacman -S wl-clipboard ydotool
+
+# 启动 ydotoold（示例，按发行版调整）
+sudo systemctl enable --now ydotool
+```
+
+**问题**: 全局热键无效（evdev）
+```bash
+# 1) 先准备 Python 依赖（包含 evdev）
+pnpm run prepare:python
+
+# 2) 检查用户是否可读 /dev/input/event*
+# 常见做法：将用户加入 input 组（按发行版安全策略评估）
+sudo usermod -aG input $USER
+```
+
+热键可在应用设置页修改（当前支持 Alt+D 与 F1-F12），保存后会立即重新注册。
+
 **问题**: `ModuleNotFoundError: No module named 'funasr'`
 ```bash
 # 解决方案 1: 使用 uv (推荐)
@@ -169,9 +201,6 @@ pnpm run prepare:python
 **问题**: FunASR 模型下载失败或加载缓慢
 ```bash
 # 检查网络连接，确保能访问 modelscope.cn
-# 如果在 macOS 上遇到 SSL 警告：
-pip install "urllib3<2.0"
-
 # 手动下载模型：
 python download_models.py
 # 或使用 uv:

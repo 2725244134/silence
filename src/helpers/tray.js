@@ -27,10 +27,7 @@ class TrayManager {
       
       if (iconPath && require("fs").existsSync(iconPath)) {
         trayIcon = nativeImage.createFromPath(iconPath);
-        if (process.platform === "darwin") {
-          trayIcon = trayIcon.resize({ width: 16, height: 16 });
-          trayIcon.setTemplateImage(true);
-        }
+        trayIcon = trayIcon.resize({ width: 18, height: 18 });
       } else {
         // 如果图标文件不存在，创建一个简单的图标
         trayIcon = nativeImage.createEmpty();

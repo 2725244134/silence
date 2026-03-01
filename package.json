@@ -12,23 +12,18 @@
     "build": "cd src && vite build && cd .. && electron-builder",
     "postinstall": "electron-builder install-app-deps",
     "build:renderer": "cd src && vite build",
-    "prepare:python": "pip install funasr modelscope torch torchaudio librosa numpy && python download_models.py",
+    "prepare:python": "uv sync && uv run python download_models.py",
     "prepare:python:uv": "uv sync && uv run python download_models.py",
-    "prepare:python:embedded": "node scripts/prepare-embedded-python.js",
-    "prepare:python:info": "node scripts/prepare-embedded-python.js --info",
-    "test:python": "node scripts/test-embedded-python.js",
-    "test:python:info": "node scripts/test-embedded-python.js --info",
-    "prebuild:mac": "npm run prepare:python:embedded && npm run build:renderer",
-    "build:mac": "electron-builder --mac",
-    "prebuild:win": "npm run prepare:python:embedded && npm run build:renderer",
-    "build:win": "electron-builder --win",
-    "prebuild:linux": "npm run prepare:python:embedded && npm run build:renderer",
+    "prepare:python:info": "uv tree",
+    "test:python": "uv run python -c \"import funasr,evdev;print('python env ok')\"",
+    "test:python:info": "uv run python --version",
+    "prebuild:linux": "npm run prepare:python:uv && npm run build:renderer",
     "build:linux": "electron-builder --linux",
     "pack": "npm run build:renderer && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
-    "dist": "npm run prepare:python:embedded && npm run build:renderer && electron-builder",
+    "dist": "npm run prepare:python:uv && npm run build:renderer && electron-builder --linux",
     "lint": "cd src && eslint .",
     "preview": "cd src && vite preview",
-    "clean": "node cleanup.js && rm -rf python"
+    "clean": "node cleanup.js && rm -rf .venv"
   },
   "keywords": [
     "dictation",
@@ -46,7 +41,6 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "@electron/notarize": "^3.0.1",
     "@eslint/js": "^9.25.0",
     "@tailwindcss/postcss": "^4.1.13",
     "@tailwindcss/vite": "^4.1.10",
@@ -97,7 +91,6 @@
     "mime-db": "^1.54.0",
     "mime-types": "^3.0.1",
     "next-themes": "^0.4.6",
-    "osascript": "^1.0.7",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "shadcn-ui": "^0.9.5",
@@ -119,8 +112,8 @@
       "preload.js",
       "funasr_server.py",
       "download_models.py",
+      "evdev_hotkey_listener.py",
       "package.json",
-      "python/**/*",
       "node_modules/**/*",
       "src/dist/**/*",
       "src/helpers/**/*",
@@ -128,31 +121,17 @@
       "assets/**/*",
       "!node_modules/.cache/**/*",
       "!src/node_modules/**/*",
-      "!python/**/*.pyc",
-      "!python/**/__pycache__/**/*"
+      "!**/*.pyc",
+      "!**/__pycache__/**/*"
     ],
     "asarUnpack": [
       "funasr_server.py",
       "download_models.py",
-      "python/**/*",
+      "evdev_hotkey_listener.py",
       "node_modules/**/*ffmpeg-static*/**/*",
       "node_modules/**/*better-sqlite3*/**/*",
       "node_modules/**/*bindings*/**/*"
     ],
-    "mac": {
-      "category": "public.app-category.productivity",
-      "icon": "assets/icon.icns",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "entitlements.mac.plist",
-      "entitlementsInherit": "entitlements.mac.plist",
-      "notarize": {
-        "teamId": "7MTHK6DGS4"
-      }
-    },
-    "win": {
-      "icon": "assets/icon.ico"
-    },
     "linux": {
       "icon": "assets/icon.png",
       "category": "Office"

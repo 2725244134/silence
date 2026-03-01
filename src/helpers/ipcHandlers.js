@@ -8,6 +8,7 @@ class IPCHandlers {
     this.funasrManager = managers.funasrManager;
     this.windowManager = managers.windowManager;
     this.hotkeyManager = managers.hotkeyManager;
+    this.cliTriggerServer = managers.cliTriggerServer;
     this.logger = managers.logger; // 添加logger引用
     
     // 跟踪F2热键注册状态
@@ -183,13 +184,15 @@ class IPCHandlers {
 
     ipcMain.handle("enable-macos-accessibility", async () => {
       try {
-        if (process.platform === "darwin") {
-          const result = await this.clipboardManager.enableMacOSAccessibility();
-          return { success: result };
-        }
-        return { success: true, message: "非 macOS 平台，无需设置" };
+        const result = await this.clipboardManager.enableMacOSAccessibility();
+        return {
+          success: result,
+          message: result
+            ? "Wayland 自动粘贴依赖可用"
+            : "缺少 wl-copy/ydotool 或 ydotoold 未运行",
+        };
       } catch (error) {
-        this.logger.error("启用 macOS accessibility 失败:", error);
+        this.logger.error("检查 Wayland 自动粘贴能力失败:", error);
         return { success: false, error: error.message };
       }
     });
@@ -306,56 +309,111 @@ class IPCHandlers {
       require("electron").app.quit();
     });
 
-    // 热键管理 - 添加发送者跟踪机制
-    this.hotkeyRegisteredSenders = new Set(); // 跟踪已注册热键的发送者
+    // 热键管理 - 记录发送者与当前全局热键的关联，避免窗口销毁时误注销
+    this.hotkeyRegisteredSenders = new Map();
+    this.hotkeyDestroyedListenerBound = new Set();
+    this.hotkeyRegistrationQueue = Promise.resolve();
     
-    ipcMain.handle("register-hotkey", (event, hotkey) => {
-      try {
-        if (this.hotkeyManager) {
-          const senderId = event.sender.id;
-          
-          // 检查是否已经为这个发送者注册过热键
-          if (this.hotkeyRegisteredSenders.has(senderId)) {
-            this.logger.info(`发送者 ${senderId} 已注册过热键，跳过重复注册`);
-            return { success: true };
-          }
-          
-          const success = this.hotkeyManager.registerHotkey(hotkey, () => {
-            // 只发送热键触发事件到主窗口，避免重复触发
-            this.logger.info(`热键 ${hotkey} 被触发，发送事件到主窗口`);
-            if (this.windowManager && this.windowManager.mainWindow && !this.windowManager.mainWindow.isDestroyed()) {
-              this.windowManager.mainWindow.webContents.send("hotkey-triggered", { hotkey });
+    ipcMain.handle("register-hotkey", async (event, hotkey) => {
+      const registerTask = async () => {
+        try {
+          if (this.hotkeyManager) {
+            const senderId = event.sender.id;
+            const normalizedHotkey = (hotkey || "ALT+D").toUpperCase();
+            const existingHotkey = this.hotkeyRegisteredSenders.get(senderId);
+            const activeHotkey = this.hotkeyManager.getRegisteredHotkeys()[0] || null;
+
+            if (existingHotkey === normalizedHotkey && activeHotkey === normalizedHotkey) {
+              this.logger.info(`发送者 ${senderId} 热键未变化，跳过重复注册`);
+              return { success: true, hotkey: normalizedHotkey };
             }
-          });
-          
-          if (success) {
-            // 添加发送者到跟踪列表
-            this.hotkeyRegisteredSenders.add(senderId);
-            
-            // 监听窗口关闭事件，清理注册记录
-            event.sender.on('destroyed', () => {
-              this.hotkeyRegisteredSenders.delete(senderId);
-              this.logger.info(`清理发送者 ${senderId} 的热键注册记录`);
+
+            // 当前仅允许单个全局热键生效，变更时先注销旧热键
+            if (activeHotkey && activeHotkey !== normalizedHotkey) {
+              this.hotkeyManager.unregisterHotkey(activeHotkey);
+            }
+
+            const success = await this.hotkeyManager.registerHotkey(normalizedHotkey, () => {
+              // 只发送热键触发事件到主窗口，避免重复触发
+              this.logger.info(`热键 ${normalizedHotkey} 被触发，发送事件到主窗口`);
+              if (this.windowManager && this.windowManager.mainWindow && !this.windowManager.mainWindow.isDestroyed()) {
+                this.windowManager.mainWindow.webContents.send("hotkey-triggered", { hotkey: normalizedHotkey });
+              }
             });
             
-            this.logger.info(`热键 ${hotkey} 注册成功，发送者: ${senderId}`);
-          } else {
-            this.logger.error(`热键 ${hotkey} 注册失败`);
+            if (success) {
+              // 同步所有现有发送者的热键记录，保持与单一全局热键一致
+              for (const id of this.hotkeyRegisteredSenders.keys()) {
+                this.hotkeyRegisteredSenders.set(id, normalizedHotkey);
+              }
+              this.hotkeyRegisteredSenders.set(senderId, normalizedHotkey);
+              
+              if (!this.hotkeyDestroyedListenerBound.has(senderId)) {
+                // 监听窗口关闭事件，仅在无其他发送者持有时注销热键
+                this.hotkeyDestroyedListenerBound.add(senderId);
+                event.sender.once("destroyed", () => {
+                  const senderHotkey = this.hotkeyRegisteredSenders.get(senderId);
+                  this.hotkeyRegisteredSenders.delete(senderId);
+                  this.hotkeyDestroyedListenerBound.delete(senderId);
+
+                  if (!senderHotkey) return;
+
+                  const stillUsed = Array.from(this.hotkeyRegisteredSenders.values()).some(
+                    (value) => value === senderHotkey
+                  );
+                  if (!stillUsed) {
+                    this.hotkeyManager.unregisterHotkey(senderHotkey);
+                    this.logger.info(`发送者 ${senderId} 销毁，且无其他窗口持有，注销热键 ${senderHotkey}`);
+                  } else {
+                    this.logger.info(`发送者 ${senderId} 销毁，保留热键 ${senderHotkey}（仍有其他窗口持有）`);
+                  }
+                });
+              }
+              
+              this.logger.info(`热键 ${normalizedHotkey} 注册成功，发送者: ${senderId}`);
+            } else {
+              this.logger.error(`热键 ${normalizedHotkey} 注册失败`);
+            }
+            
+            return { success, hotkey: normalizedHotkey };
           }
-          
-          return { success };
+          return { success: false, error: "热键管理器未初始化" };
+        } catch (error) {
+          this.logger.error("注册热键失败:", error);
+          return { success: false, error: error.message };
         }
-        return { success: false, error: "热键管理器未初始化" };
-      } catch (error) {
-        this.logger.error("注册热键失败:", error);
-        return { success: false, error: error.message };
-      }
+      };
+
+      const queuedTask = this.hotkeyRegistrationQueue.then(registerTask, registerTask);
+      this.hotkeyRegistrationQueue = queuedTask.catch(() => {});
+      return queuedTask;
     });
 
     ipcMain.handle("unregister-hotkey", (event, hotkey) => {
       try {
         if (this.hotkeyManager) {
-          const success = this.hotkeyManager.unregisterHotkey(hotkey);
+          const senderId = event.sender.id;
+          const senderHotkey = this.hotkeyRegisteredSenders.get(senderId);
+          const targetHotkey = (hotkey || senderHotkey || "").toUpperCase();
+
+          if (senderHotkey) {
+            this.hotkeyRegisteredSenders.delete(senderId);
+          }
+
+          if (!targetHotkey) {
+            return { success: false };
+          }
+
+          const stillUsed = Array.from(this.hotkeyRegisteredSenders.values()).some(
+            (value) => value === targetHotkey
+          );
+
+          if (stillUsed) {
+            this.logger.info(`发送者 ${senderId} 注销热键记录，但热键 ${targetHotkey} 仍被其他窗口使用`);
+            return { success: true };
+          }
+
+          const success = this.hotkeyManager.unregisterHotkey(targetHotkey);
           return { success };
         }
         return { success: false, error: "热键管理器未初始化" };
@@ -369,19 +427,33 @@ class IPCHandlers {
       try {
         if (this.hotkeyManager) {
           const hotkeys = this.hotkeyManager.getRegisteredHotkeys();
-          // 返回第一个非F2的热键，或默认热键
-          const mainHotkey = hotkeys.find(key => key !== 'F2') || "CommandOrControl+Shift+Space";
+          const mainHotkey = hotkeys[0] || this.databaseManager.getSetting("global_hotkey", "ALT+D");
           return mainHotkey;
         }
-        return "CommandOrControl+Shift+Space";
+        return this.databaseManager.getSetting("global_hotkey", "ALT+D");
       } catch (error) {
         this.logger.error("获取当前热键失败:", error);
-        return "CommandOrControl+Shift+Space";
+        return this.databaseManager.getSetting("global_hotkey", "ALT+D");
+      }
+    });
+
+    ipcMain.handle("trigger-dictation", () => {
+      try {
+        if (this.windowManager && this.windowManager.mainWindow && !this.windowManager.mainWindow.isDestroyed()) {
+          this.windowManager.mainWindow.webContents.send("hotkey-triggered", {
+            hotkey: "MANUAL_TRIGGER",
+            source: "ipc"
+          });
+        }
+        return { success: true };
+      } catch (error) {
+        this.logger.error("手动触发听写失败:", error);
+        return { success: false, error: error.message };
       }
     });
 
     // F2热键管理
-    ipcMain.handle("register-f2-hotkey", (event) => {
+    ipcMain.handle("register-f2-hotkey", async (event) => {
       try {
         const senderId = event.sender.id;
         
@@ -396,7 +468,7 @@ class IPCHandlers {
           const isFirstRegistration = this.f2RegisteredSenders.size === 0;
           
           if (isFirstRegistration) {
-            const success = this.hotkeyManager.registerF2DoubleClick((data) => {
+            const success = await this.hotkeyManager.registerF2DoubleClick((data) => {
               // 发送F2双击事件到所有注册的渲染进程
               this.logger.info("发送F2双击事件到渲染进程:", data);
               this.f2RegisteredSenders.forEach(id => {
@@ -523,12 +595,11 @@ class IPCHandlers {
 
     ipcMain.handle("check-permissions", async () => {
       try {
-        // 检查辅助功能权限
-        const hasAccessibility = await this.clipboardManager.checkAccessibilityPermissions();
+        const waylandPasteReady = await this.clipboardManager.checkAccessibilityPermissions();
         
         return {
           microphone: true, // 麦克风权限由前端检查
-          accessibility: hasAccessibility
+          accessibility: waylandPasteReady
         };
       } catch (error) {
         this.logger.error("检查权限失败:", error);
@@ -542,26 +613,25 @@ class IPCHandlers {
 
     ipcMain.handle("request-permissions", async () => {
       try {
-        // 对于辅助功能权限，我们只能引导用户手动授予
-        // 这里可以打开系统设置页面
-        if (process.platform === "darwin") {
-          this.clipboardManager.openSystemSettings();
-        }
-        return { success: true };
+        this.clipboardManager.openSystemSettings();
+        return {
+          success: true,
+          message: "请安装 wl-copy/ydotool 并确保 ydotoold 正在运行",
+        };
       } catch (error) {
         this.logger.error("请求权限失败:", error);
         return { success: false, error: error.message };
       }
     });
 
-    // 测试辅助功能权限
+    // 测试 Wayland 自动粘贴链路
     ipcMain.handle("test-accessibility-permission", async () => {
       try {
         // 使用测试文本检查权限
         await this.clipboardManager.pasteText("蛐蛐权限测试");
-        return { success: true, message: "辅助功能权限测试成功" };
+        return { success: true, message: "Wayland 自动粘贴能力测试成功" };
       } catch (error) {
-        this.logger.error("辅助功能权限测试失败:", error);
+        this.logger.error("Wayland 自动粘贴能力测试失败:", error);
         return { success: false, error: error.message };
       }
     });
@@ -569,12 +639,8 @@ class IPCHandlers {
     // 打开系统权限设置
     ipcMain.handle("open-system-permissions", () => {
       try {
-        if (process.platform === "darwin") {
-          this.clipboardManager.openSystemSettings();
-          return { success: true };
-        } else {
-          return { success: false, error: "当前平台不支持自动打开权限设置" };
-        }
+        this.clipboardManager.openSystemSettings();
+        return { success: true, message: "请手动配置 Wayland 输入注入环境" };
       } catch (error) {
         this.logger.error("打开系统权限设置失败:", error);
         return { success: false, error: error.message };

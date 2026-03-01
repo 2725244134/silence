@@ -26,7 +26,6 @@ class FunASRManager {
     
     // 简化缓存
     this._cachedPythonEnv = null;
-    this._lastEmbeddedCheck = null;
     
     // 模型配置
     this.modelConfigs = {
@@ -62,124 +61,40 @@ class FunASRManager {
     }
   }
 
-  getEmbeddedPythonPath() {
-    // 获取嵌入式Python路径
-    if (process.env.NODE_ENV === "development") {
-      return path.join(__dirname, "..", "..", "python", "bin", "python3.11");
-    } else {
-      return path.join(
-        process.resourcesPath,
-        "app.asar.unpacked",
-        "python",
-        "bin",
-        "python3.11"
-      );
-    }
-  }
-
   setupIsolatedEnvironment() {
-    // 设置Python环境变量，根据实际使用的Python来决定
-    const embeddedPythonPath = this.getEmbeddedPythonPath();
-    const isUsingEmbedded = fs.existsSync(embeddedPythonPath);
-    
-    if (isUsingEmbedded) {
-      // 使用嵌入式Python时设置完全隔离的环境变量
-      const pythonHome = path.dirname(path.dirname(embeddedPythonPath));
-      const sitePackages = path.join(pythonHome, 'lib', 'python3.11', 'site-packages');
-      
-      process.env.PYTHONHOME = pythonHome;
-      process.env.PYTHONPATH = sitePackages;
-      process.env.PYTHONDONTWRITEBYTECODE = '1';
-      process.env.PYTHONIOENCODING = 'utf-8';
-      process.env.PYTHONUNBUFFERED = '1';
-      
-      this.logger.info && this.logger.info('设置嵌入式Python环境', {
-        PYTHONHOME: process.env.PYTHONHOME,
-        PYTHONPATH: process.env.PYTHONPATH,
-        pythonExecutable: embeddedPythonPath
-      });
-    } else {
-      // 使用系统Python时，清除可能干扰的嵌入式Python环境变量
-      delete process.env.PYTHONHOME;
-      delete process.env.PYTHONPATH;
-      
-      // 设置基础环境变量
-      process.env.PYTHONDONTWRITEBYTECODE = '1';
-      process.env.PYTHONIOENCODING = 'utf-8';
-      process.env.PYTHONUNBUFFERED = '1';
-      
-      this.logger.info && this.logger.info('设置系统Python环境', {
-        note: '清除嵌入式Python环境变量，使用系统Python默认环境',
-        pythonExecutable: this.pythonCmd || '未确定'
-      });
-    }
-    
-    // 清除可能干扰的系统Python环境变量
+    // Linux + uv / 系统Python：不使用嵌入式环境变量
+    delete process.env.PYTHONHOME;
+    delete process.env.PYTHONPATH;
     delete process.env.PYTHONUSERBASE;
     delete process.env.PYTHONSTARTUP;
     delete process.env.VIRTUAL_ENV;
+
+    process.env.PYTHONDONTWRITEBYTECODE = '1';
+    process.env.PYTHONIOENCODING = 'utf-8';
+    process.env.PYTHONUNBUFFERED = '1';
   }
 
   buildPythonEnvironment() {
-    // 构建完整的Python环境变量，根据实际使用的Python路径来配置
-    const embeddedPythonPath = this.getEmbeddedPythonPath();
-    const isUsingEmbedded = fs.existsSync(embeddedPythonPath);
-    
-    // 缓存环境变量，避免重复构建和日志输出
-    if (this._cachedPythonEnv && this._lastEmbeddedCheck === isUsingEmbedded) {
+    // 构建 Linux/uv 运行时环境，不注入嵌入式路径
+    if (this._cachedPythonEnv) {
       return this._cachedPythonEnv;
     }
     
-    let env = {
+    const env = {
       ...process.env,
-      // 基础Python环境变量
       PYTHONDONTWRITEBYTECODE: '1',
       PYTHONIOENCODING: 'utf-8',
       PYTHONUNBUFFERED: '1',
-      
-      // 设置用户数据目录用于日志
       ELECTRON_USER_DATA: require('electron').app.getPath('userData')
     };
-    
-    if (isUsingEmbedded) {
-      // 使用嵌入式Python时的完整隔离环境
-      const pythonHome = path.dirname(path.dirname(embeddedPythonPath));
-      const sitePackages = path.join(pythonHome, 'lib', 'python3.11', 'site-packages');
-      
-      env.PYTHONHOME = pythonHome;
-      env.PYTHONPATH = sitePackages;
-      env.LD_LIBRARY_PATH = path.join(pythonHome, 'lib');
-      env.DYLD_LIBRARY_PATH = path.join(pythonHome, 'lib'); // macOS
-      
-      // 只在首次构建或环境变化时记录日志
-      if (!this._cachedPythonEnv || this._lastEmbeddedCheck !== isUsingEmbedded) {
-        this.logger.info && this.logger.info('构建嵌入式Python环境变量', {
-          PYTHONHOME: env.PYTHONHOME,
-          PYTHONPATH: env.PYTHONPATH,
-          LD_LIBRARY_PATH: env.LD_LIBRARY_PATH,
-          DYLD_LIBRARY_PATH: env.DYLD_LIBRARY_PATH,
-          pythonExecutable: embeddedPythonPath
-        });
-      }
-    } else {
-      // 使用系统Python时，清除可能干扰的嵌入式Python环境变量
-      // 不设置PYTHONHOME和PYTHONPATH，让系统Python使用自己的环境
-      if (!this._cachedPythonEnv || this._lastEmbeddedCheck !== isUsingEmbedded) {
-        this.logger.info && this.logger.info('构建系统Python环境变量', {
-          note: '使用系统Python默认环境',
-          pythonExecutable: this.pythonCmd || '未确定'
-        });
-      }
-    }
-    
-    // 清除可能干扰的系统Python环境变量
+
+    delete env.PYTHONHOME;
+    delete env.PYTHONPATH;
     delete env.PYTHONUSERBASE;
     delete env.PYTHONSTARTUP;
     delete env.VIRTUAL_ENV;
     
-    // 缓存结果
     this._cachedPythonEnv = env;
-    this._lastEmbeddedCheck = isUsingEmbedded;
     
     return env;
   }
@@ -726,10 +641,27 @@ class FunASRManager {
 
         this.serverProcess.stderr.on("data", (data) => {
           const errorOutput = data.toString();
-          this.logger.error && this.logger.error('FunASR服务器错误输出', { errorOutput });
+          let logLevel = "error";
+          let logMessage = "FunASR服务器错误输出";
+
+          if (/ - INFO - /.test(errorOutput)) {
+            logLevel = "info";
+            logMessage = "FunASR服务器日志输出";
+          } else if (/ - (WARNING|WARN) - /.test(errorOutput)) {
+            logLevel = "warn";
+            logMessage = "FunASR服务器警告输出";
+          }
+
+          const loggerFn = this.logger && this.logger[logLevel];
+          if (loggerFn) {
+            loggerFn.call(this.logger, logMessage, { errorOutput });
+          } else if (this.logger && this.logger.error) {
+            this.logger.error(logMessage, { errorOutput });
+          }
+
           // 同时记录到FunASR专用日志
           if (this.logger.logFunASR) {
-            this.logger.logFunASR('error', 'Python stderr', { errorOutput });
+            this.logger.logFunASR(logLevel, 'Python stderr', { errorOutput });
           }
         });
 
@@ -834,44 +766,8 @@ class FunASRManager {
       return this.pythonCmd;
     }
 
-    // 优先使用嵌入式Python（完全隔离策略）
-    const embeddedPython = this.getEmbeddedPythonPath();
-    
-    this.logger.info && this.logger.info('检查嵌入式Python', {
-      path: embeddedPython,
-      exists: fs.existsSync(embeddedPython)
-    });
-
-    if (fs.existsSync(embeddedPython)) {
-      try {
-        // 设置隔离环境
-        this.setupIsolatedEnvironment();
-        
-        // 验证嵌入式Python是否可用
-        const version = await this.getPythonVersion(embeddedPython);
-        if (this.isPythonVersionSupported(version)) {
-          this.pythonCmd = embeddedPython;
-          this.logger.info && this.logger.info('使用嵌入式Python', {
-            path: embeddedPython,
-            version: `${version.major}.${version.minor}`
-          });
-          return embeddedPython;
-        }
-      } catch (error) {
-        this.logger.warn && this.logger.warn('嵌入式Python不可用', error);
-      }
-    }
-
-    // 如果嵌入式Python不可用，在开发模式下回退到系统Python
-    if (process.env.NODE_ENV === "development") {
-      this.logger.warn && this.logger.warn('开发模式：回退到系统Python');
-      return await this.findPythonExecutableWithFallback();
-    }
-
-    // 生产模式下不回退，确保完全隔离
-    throw new Error(
-      "嵌入式Python环境不可用。请重新安装应用或运行构建脚本准备Python环境。"
-    );
+    this.setupIsolatedEnvironment();
+    return await this.findPythonExecutableWithFallback();
   }
 
   async findPythonExecutableWithFallback() {
@@ -891,8 +787,6 @@ class FunASRManager {
       "/usr/bin/python3",
       "/usr/local/bin/python3.11",
       "/usr/local/bin/python3",
-      "/opt/homebrew/bin/python3.11",
-      "/opt/homebrew/bin/python3",
       "/usr/bin/python",
       "/usr/local/bin/python",
     ];
@@ -916,12 +810,8 @@ class FunASRManager {
 
   async getPythonVersion(pythonPath) {
     return new Promise((resolve) => {
-      // 如果是嵌入式Python，使用完整的环境变量
-      const isEmbedded = pythonPath === this.getEmbeddedPythonPath();
-      const env = isEmbedded ? this.buildPythonEnvironment() : process.env;
-      
       const testProcess = spawn(pythonPath, ["--version"], {
-        env: env
+        env: this.buildPythonEnvironment()
       });
       let output = "";
       

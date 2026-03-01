@@ -14,6 +14,7 @@ import { ModelDownloadProgress } from "./components/ui/model-status-indicator";
 
 // 动态导入设置页面组件
 const SettingsPage = React.lazy(() => import('./settings.jsx').then(module => ({ default: module.SettingsPage })));
+let mainWindowHotkeyInitPromise = null;
 
 // 声波图标组件（空闲/悬停状态）
 const SoundWaveIcon = ({ size = 16, isActive = false }) => {
@@ -272,7 +273,7 @@ export default function App() {
     } catch (error) {
       console.error("❌ 粘贴文本失败:", error);
       toast.error("粘贴失败", {
-        description: "请检查辅助功能权限。文本已复制到剪贴板 - 请手动使用 Cmd+V 粘贴。"
+        description: "请检查 Wayland 注入链路。文本已复制到剪贴板 - 请手动使用 Ctrl+V 粘贴。"
       });
     }
   }, []);
@@ -439,7 +440,7 @@ export default function App() {
     }
   }, [modelStatus, isRecording, isRecordingProcessing, startRecording, stopRecording]);
 
-  // 使用热键Hook，不再使用F2双击功能
+  // 使用热键Hook
   const { hotkey, syncRecordingState, registerHotkey } = useHotkey();
 
   // 注册传统热键监听 - 只在主窗口注册，避免重复
@@ -456,20 +457,48 @@ export default function App() {
 
     const initializeHotkey = async () => {
       try {
-        // 注册默认热键 CommandOrControl+Shift+Space
-        const success = await registerHotkey('CommandOrControl+Shift+Space');
+        // 从设置读取热键，默认 ALT+D
+        const storedHotkey = await window.electronAPI.getSetting('global_hotkey', null);
+        const normalizedStoredHotkey = typeof storedHotkey === 'string' ? storedHotkey.toUpperCase() : '';
+        const validHotkeyPattern = /^(ALT\+[A-Z]|ALT\+F\d{1,2}|F\d{1,2}|[A-Z]|SPACE)$/;
+        const configuredHotkey = validHotkeyPattern.test(normalizedStoredHotkey)
+          ? normalizedStoredHotkey
+          : 'ALT+D';
+
+        if (configuredHotkey !== normalizedStoredHotkey) {
+          await window.electronAPI.setSetting('global_hotkey', configuredHotkey);
+        }
+
+        const success = await registerHotkey(configuredHotkey);
         if (success) {
-          console.log('主窗口热键注册成功');
+          console.log(`主窗口热键注册成功: ${configuredHotkey}`);
+          return true;
         } else {
           console.error('主窗口热键注册失败');
+          toast.error("全局热键不可用", {
+            description: "请先运行 pnpm run prepare:python:uv，并确认 evdev 设备权限可用。"
+          });
+          return false;
         }
       } catch (error) {
         console.error('主窗口热键注册异常:', error);
+        return false;
       }
     };
 
-    if (registerHotkey) {
-      initializeHotkey();
+    if (registerHotkey && !mainWindowHotkeyInitPromise) {
+      mainWindowHotkeyInitPromise = initializeHotkey()
+        .then((ok) => {
+          if (!ok) {
+            mainWindowHotkeyInitPromise = null;
+          }
+          return ok;
+        })
+        .catch((error) => {
+          console.error('主窗口热键初始化失败:', error);
+          mainWindowHotkeyInitPromise = null;
+          return false;
+        });
     }
   }, [registerHotkey]);
 
