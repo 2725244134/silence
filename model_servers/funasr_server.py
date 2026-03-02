@@ -52,6 +52,22 @@ logger = logging.getLogger(__name__)
 logger.info(f"FunASR服务器日志文件: {log_file_path}")
 
 
+# Command action constants
+CMD_TRANSCRIBE = "transcribe"
+CMD_STATUS = "status"
+CMD_STATS = "stats"
+CMD_CLEANUP = "cleanup"
+CMD_EXIT = "exit"
+
+# Error type constants
+class ErrorType:
+    TIMEOUT = "timeout_error"
+    INIT = "init_error"
+    IMPORT = "import_error"
+    MODELS_NOT_DOWNLOADED = "models_not_downloaded"
+    TRANSCRIPTION = "transcription_error"
+
+
 @contextlib.contextmanager
 def suppress_stdout():
     """上下文管理器：临时重定向stdout到devnull，避免FunASR库的非JSON输出干扰IPC通信"""
@@ -218,7 +234,7 @@ class FunASRServer:
                     return {
                         "success": False,
                         "error": "模型加载超时",
-                        "type": "timeout_error",
+                        "type": ErrorType.TIMEOUT,
                     }
 
             # 检查加载结果
@@ -227,7 +243,7 @@ class FunASRServer:
             if failed_models:
                 error_msg = f"以下模型加载失败: {', '.join(failed_models)}"
                 logger.error(error_msg)
-                return {"success": False, "error": error_msg, "type": "init_error"}
+                return {"success": False, "error": error_msg, "type": ErrorType.INIT}
 
             total_time = time.time() - start_time
             self.initialized = True
@@ -242,7 +258,7 @@ class FunASRServer:
         except ImportError as e:
             error_msg = "FunASR未安装，请先安装FunASR: pip install funasr"
             logger.error(error_msg)
-            return {"success": False, "error": error_msg, "type": "import_error"}
+            return {"success": False, "error": error_msg, "type": ErrorType.IMPORT}
 
         except Exception as e:
             error_msg = f"FunASR模型初始化失败: {str(e)}"
@@ -466,7 +482,7 @@ class FunASRServer:
             init_result = {
                 "success": False,
                 "error": "模型文件未下载，请先下载模型",
-                "type": "models_not_downloaded"
+                "type": ErrorType.MODELS_NOT_DOWNLOADED
             }
         print(json.dumps(init_result, ensure_ascii=False))
         sys.stdout.flush()
@@ -491,18 +507,18 @@ class FunASRServer:
                     continue
 
                 # 处理命令
-                if command.get("action") == "transcribe":
+                if command.get("action") == CMD_TRANSCRIBE:
                     audio_path = command.get("audio_path")
                     options = command.get("options", {})
                     result = self.transcribe_audio(audio_path, options)
-                elif command.get("action") == "status":
+                elif command.get("action") == CMD_STATUS:
                     result = self.check_status()
-                elif command.get("action") == "stats":
+                elif command.get("action") == CMD_STATS:
                     result = {"success": True, "stats": self.get_performance_stats()}
-                elif command.get("action") == "cleanup":
+                elif command.get("action") == CMD_CLEANUP:
                     self._cleanup_memory()
                     result = {"success": True, "message": "内存清理完成"}
-                elif command.get("action") == "exit":
+                elif command.get("action") == CMD_EXIT:
                     result = {"success": True, "message": "服务器退出"}
                     print(json.dumps(result, ensure_ascii=False))
                     sys.stdout.flush()

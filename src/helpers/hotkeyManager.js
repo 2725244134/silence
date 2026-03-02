@@ -25,16 +25,17 @@ class HotkeyManager {
 
   getListenerScriptPath() {
     if (process.env.NODE_ENV === "development") {
-      return path.join(__dirname, "..", "..", "evdev_hotkey_listener.py");
+      return path.join(__dirname, "..", "..", "python", "evdev_hotkey_listener.py");
     }
 
     if (!process.resourcesPath) {
-      return path.join(__dirname, "..", "..", "evdev_hotkey_listener.py");
+      return path.join(__dirname, "..", "..", "python", "evdev_hotkey_listener.py");
     }
 
     return path.join(
       process.resourcesPath,
       "app.asar.unpacked",
+      "python",
       "evdev_hotkey_listener.py"
     );
   }

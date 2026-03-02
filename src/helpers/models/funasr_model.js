@@ -3,15 +3,15 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const os = require("os");
-const PythonInstaller = require("./pythonInstaller");
-const { runCommand, TIMEOUTS } = require("../utils/process");
+const PythonInstaller = require("../pythonInstaller");
+const { runCommand, TIMEOUTS } = require("../../utils/process");
 
 // 简单的全局缓存，避免频繁检查
 let globalModelCheckCache = null;
 let globalModelCheckTime = 0;
 const GLOBAL_CACHE_TIME = 2000; // 减少到2秒缓存，确保及时更新
 
-class FunASRManager {
+class FunasrModel {
   constructor(logger = null) {
     this.logger = logger || console; // 使用传入的logger或默认console
     this.pythonCmd = null; // 缓存 Python 可执行文件路径
@@ -51,28 +51,17 @@ class FunASRManager {
   getFunASRServerPath() {
     // 获取FunASR服务器脚本路径
     if (process.env.NODE_ENV === "development") {
-      return path.join(__dirname, "..", "..", "funasr_server.py");
+      return path.join(__dirname, "..", "..", "..", "python", "funasr_server.py");
     } else {
       return path.join(
         process.resourcesPath,
         "app.asar.unpacked",
+        "python",
         "funasr_server.py"
       );
     }
   }
 
-  setupIsolatedEnvironment() {
-    // Linux + uv / 系统Python：不使用嵌入式环境变量
-    delete process.env.PYTHONHOME;
-    delete process.env.PYTHONPATH;
-    delete process.env.PYTHONUSERBASE;
-    delete process.env.PYTHONSTARTUP;
-    delete process.env.VIRTUAL_ENV;
-
-    process.env.PYTHONDONTWRITEBYTECODE = '1';
-    process.env.PYTHONIOENCODING = 'utf-8';
-    process.env.PYTHONUNBUFFERED = '1';
-  }
 
   buildPythonEnvironment() {
     // 构建 Linux/uv 运行时环境，不注入嵌入式路径
@@ -216,12 +205,12 @@ class FunASRManager {
       for (const [modelType, config] of Object.entries(this.modelConfigs)) {
         const modelDir = path.join(cachePath, config.cache_path);
         const modelFile = path.join(modelDir, "model.pt");
-        
-        if (fs.existsSync(modelFile)) {
+
+        try {
           const stats = fs.statSync(modelFile);
           const fileSize = stats.size;
           const isComplete = fileSize >= config.expected_size * 0.95; // 允许5%误差
-          
+
           results[modelType] = {
             exists: true,
             path: modelFile,
@@ -229,11 +218,11 @@ class FunASRManager {
             expected_size: config.expected_size,
             complete: isComplete
           };
-          
+
           if (!isComplete) {
             missingModels.push(modelType);
           }
-        } else {
+        } catch (error) {
           results[modelType] = {
             exists: false,
             path: modelFile,
@@ -310,10 +299,12 @@ class FunASRManager {
         const modelFile = path.join(modelDir, "model.pt");
         
         let fileSize = 0;
-        if (fs.existsSync(modelFile)) {
+        try {
           const stats = fs.statSync(modelFile);
           fileSize = stats.size;
           totalDownloaded += fileSize;
+        } catch (error) {
+          // File doesn't exist, fileSize remains 0
         }
         
         const progress = Math.min(100, (fileSize / config.expected_size) * 100);
@@ -349,11 +340,12 @@ class FunASRManager {
      * 获取下载脚本路径
      */
     if (process.env.NODE_ENV === "development") {
-      return path.join(__dirname, "..", "..", "download_models.py");
+      return path.join(__dirname, "..", "..", "..", "python", "download_models.py");
     } else {
       return path.join(
         process.resourcesPath,
         "app.asar.unpacked",
+        "python",
         "download_models.py"
       );
     }
@@ -378,13 +370,8 @@ class FunASRManager {
       
       this.logger.info && this.logger.info('启动模型下载脚本:', {
         pythonCmd,
-        scriptPath,
-        scriptExists: fs.existsSync(scriptPath)
+        scriptPath
       });
-      
-      if (!fs.existsSync(scriptPath)) {
-        throw new Error(`下载脚本未找到: ${scriptPath}`);
-      }
       
       return new Promise((resolve, reject) => {
         // 确保使用正确的Python环境
@@ -407,6 +394,7 @@ class FunASRManager {
               
               if (result.error) {
                 hasError = true;
+                downloadProcess.kill();
                 reject(new Error(result.error));
                 return;
               }
@@ -430,6 +418,7 @@ class FunASRManager {
                   resolve({ success: true, message: result.message || "模型下载完成" });
                 } else {
                   hasError = true;
+                  downloadProcess.kill();
                   reject(new Error(result.error || "模型下载失败"));
                 }
                 return;
@@ -571,18 +560,9 @@ class FunASRManager {
       const serverPath = this.getFunASRServerPath();
       this.logger.info && this.logger.info('FunASR服务器配置', {
         pythonCmd,
-        serverPath,
-        serverExists: fs.existsSync(serverPath)
+        serverPath
       });
-      
-      if (!fs.existsSync(serverPath)) {
-        this.logger.error && this.logger.error('FunASR服务器脚本未找到，跳过服务器启动', { serverPath });
-        return;
-      }
 
-      // 确保环境变量正确设置
-      this.setupIsolatedEnvironment();
-      
       // 构建完整的环境变量
       const pythonEnv = this.buildPythonEnvironment();
 
@@ -593,11 +573,6 @@ class FunASRManager {
           env: pythonEnv
         });
         const cachePath = this.getModelCachePath();
-        // this.serverProcess = spawn(pythonCmd, [serverPath], {
-        //   stdio: ["pipe", "pipe", "pipe"],
-        //   windowsHide: true,
-        //   env: pythonEnv // 使用完整的Python环境变量
-        // });
 
         this.serverProcess = spawn(
           pythonCmd,
@@ -709,17 +684,25 @@ class FunASRManager {
 
     return new Promise((resolve, reject) => {
       let responseReceived = false;
-      
+      let timeoutId = null;
+
+      const cleanup = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+        if (this.serverProcess && this.serverProcess.stdout) {
+          this.serverProcess.stdout.removeListener('data', onData);
+        }
+      };
+
       const onData = (data) => {
         if (responseReceived) return;
-        
+
         const lines = data.toString().split('\n').filter(line => line.trim());
-        
+
         for (const line of lines) {
           try {
             const result = JSON.parse(line);
             responseReceived = true;
-            this.serverProcess.stdout.removeListener('data', onData);
+            cleanup();
             resolve(result);
             return;
           } catch (parseError) {
@@ -729,15 +712,15 @@ class FunASRManager {
       };
 
       this.serverProcess.stdout.on('data', onData);
-      
+
       // 发送命令
       this.serverProcess.stdin.write(JSON.stringify(command) + '\n');
-      
+
       // 设置超时
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         if (!responseReceived) {
           responseReceived = true;
-          this.serverProcess.stdout.removeListener('data', onData);
+          cleanup();
           reject(new Error('服务器响应超时'));
         }
       }, 60000); // 1分钟超时
@@ -766,14 +749,13 @@ class FunASRManager {
       return this.pythonCmd;
     }
 
-    this.setupIsolatedEnvironment();
     return await this.findPythonExecutableWithFallback();
   }
 
   async findPythonExecutableWithFallback() {
     // 保留原有的查找逻辑作为开发时的回退方案
-    const projectRoot = path.join(__dirname, "..", "..");
-      
+    const projectRoot = path.join(__dirname, "..", "..", "..");
+
     const possiblePaths = [
       // 优先使用 uv 虚拟环境中的 Python
       path.join(projectRoot, ".venv", "bin", "python3.11"),
@@ -1004,12 +986,6 @@ class FunASRManager {
   }
 
   async transcribeAudio(audioBlob, options = {}) {
-    // 检查 FunASR 是否已安装
-    const status = await this.checkFunASRInstallation();
-    if (!status.installed) {
-      throw new Error("FunASR 未安装。请先安装 FunASR。");
-    }
-
     // 如果服务器还未就绪，等待初始化完成
     if (!this.serverReady && this.initializationPromise) {
       this.logger.info && this.logger.info('等待FunASR服务器就绪...');
@@ -1072,19 +1048,16 @@ class FunASRManager {
     this.logger.debug && this.logger.debug('缓冲区创建，大小:', buffer.length);
 
     await fs.promises.writeFile(tempAudioPath, buffer);
-    
-    // 验证文件是否正确写入
-    const stats = await fs.promises.stat(tempAudioPath);
+
     this.logger.info && this.logger.info('临时音频文件创建:', {
       path: tempAudioPath,
-      size: stats.size,
-      isFile: stats.isFile()
+      size: buffer.length
     });
-    
-    if (stats.size === 0) {
+
+    if (buffer.length === 0) {
       throw new Error("音频文件为空");
     }
-    
+
     return tempAudioPath;
   }
 
@@ -1135,4 +1108,4 @@ class FunASRManager {
   }
 }
 
-module.exports = FunASRManager;
+module.exports = FunasrModel;
