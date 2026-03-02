@@ -165,7 +165,7 @@ class FunASRWebSocketServerManager {
             this.serverProcess.kill();
           }
           resolve({ success: false, error: "启动超时" });
-        }, 30000);
+        }, 600000); // 10分钟超时，给模型下载足够时间
 
         // 监听 stdout
         this.serverProcess.stdout.on("data", (data) => {

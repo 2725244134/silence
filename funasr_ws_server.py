@@ -137,6 +137,7 @@ class FunASRWebSocketServer:
 
     async def start(self):
         """启动服务器"""
+        logger.info("开始加载模型...")
         if not await self.model_manager.initialize():
             logger.error("模型初始化失败，退出")
             return

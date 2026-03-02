@@ -48,20 +48,6 @@ class FunASRManager {
   }
 
 
-  getFunASRServerPath() {
-    // 获取FunASR服务器脚本路径（已废弃，使用 WebSocket 服务器）
-    // 保留此方法以防旧代码引用
-    if (process.env.NODE_ENV === "development") {
-      return path.join(__dirname, "..", "..", "funasr_ws_server.py");
-    } else {
-      return path.join(
-        process.resourcesPath,
-        "app.asar.unpacked",
-        "funasr_ws_server.py"
-      );
-    }
-  }
-
   setupIsolatedEnvironment() {
     // Linux + uv / 系统Python：不使用嵌入式环境变量
     delete process.env.PYTHONHOME;
@@ -550,12 +536,18 @@ class FunASRManager {
 
   async preInitializeModels() {
     // 旧的 stdin/stdout 服务器已废弃，使用 WebSocket 服务器
-    // 保留此方法以防旧代码引用，但不再启动服务器
+    // 此方法已废弃，不再执行任何操作
     this.logger.info && this.logger.info('preInitializeModels: 已废弃，使用 WebSocket 服务器');
     return Promise.resolve();
   }
 
-  async _startFunASRServer() {
+  // ========== 以下方法已废弃，使用 WebSocket 服务器 ==========
+  // getFunASRServerPath() - 已删除
+  // _startFunASRServer() - 已删除
+  // _stopFunASRServer() - 已删除
+  // restartFunasrServer() - 已删除
+
+  async checkFunASRInstallation() {
     try {
       this.logger.info && this.logger.info('启动FunASR服务器...');
       
