@@ -36,6 +36,25 @@ class FunASRWebSocketServerManager {
   }
 
   /**
+   * 检查 uv 是否可用
+   */
+  async _checkUvAvailable() {
+    return new Promise((resolve) => {
+      const testProcess = spawn("uv", ["--version"], {
+        stdio: "ignore",
+      });
+
+      testProcess.on("close", (code) => {
+        resolve(code === 0);
+      });
+
+      testProcess.on("error", () => {
+        resolve(false);
+      });
+    });
+  }
+
+  /**
    * 检查端口是否可用
    */
   async _isPortAvailable(port) {
@@ -83,7 +102,6 @@ class FunASRWebSocketServerManager {
         return { success: false, error: "FunASR 未安装" };
       }
 
-      const pythonCmd = await this.baseManager.findPythonExecutable();
       const serverPath = path.join(__dirname, "../../funasr_ws_server.py");
       const cachePath = this.baseManager.getModelCachePath();
 
@@ -94,12 +112,22 @@ class FunASRWebSocketServerManager {
       this.baseManager.setupIsolatedEnvironment();
       const pythonEnv = this.baseManager.buildPythonEnvironment();
 
+      // 优先使用 uv run，如果不可用则回退到直接使用 Python
+      const projectRoot = path.join(__dirname, "../..");
+      const useUv = await this._checkUvAvailable();
+
       return new Promise((resolve, reject) => {
         this.logger.info && this.logger.info("启动 FunASR WebSocket 服务器...");
 
-        this.serverProcess = spawn(
-          pythonCmd,
-          [
+        let command, args;
+        if (useUv) {
+          this.logger.info && this.logger.info("使用 uv run 启动服务器");
+          command = "uv";
+          args = [
+            "run",
+            "--directory",
+            projectRoot,
+            "python",
             serverPath,
             "--damo-root",
             cachePath,
@@ -107,13 +135,28 @@ class FunASRWebSocketServerManager {
             this.host,
             "--port",
             this.port.toString(),
-          ],
-          {
-            stdio: ["ignore", "pipe", "pipe"],
-            windowsHide: true,
-            env: pythonEnv,
-          }
-        );
+          ];
+        } else {
+          this.logger.info && this.logger.info("使用直接 Python 启动服务器");
+          const pythonCmd = await this.baseManager.findPythonExecutable();
+          command = pythonCmd;
+          args = [
+            serverPath,
+            "--damo-root",
+            cachePath,
+            "--host",
+            this.host,
+            "--port",
+            this.port.toString(),
+          ];
+        }
+
+        this.serverProcess = spawn(command, args, {
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+          env: pythonEnv,
+          cwd: projectRoot,
+        });
 
         let startupTimeout = setTimeout(() => {
           this.logger.warn && this.logger.warn("WebSocket 服务器启动超时");
