@@ -22,7 +22,7 @@ export class FunASRService extends ASRService {
   }
 
   getSupportedModes() {
-    return [TranscriptionMode.BATCH, TranscriptionMode.REALTIME];
+    return [TranscriptionMode.REALTIME];  // 只支持实时模式
   }
 
   async connect() {

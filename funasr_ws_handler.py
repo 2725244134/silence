@@ -32,8 +32,6 @@ class MessageHandler:
         msg_type = data.get("type")
 
         handlers = {
-            "start_batch": self._handle_start_batch,
-            "end_batch": self._handle_end_batch,
             "start_realtime": self._handle_start_realtime,
             "end_realtime": self._handle_end_realtime,
             "cancel": self._handle_cancel,
@@ -68,77 +66,6 @@ class MessageHandler:
             await self._process_realtime_chunk(websocket, session, data)
             # 修剪缓冲区防止内存泄漏
             self.sessions.trim_audio_buffer(session["id"])
-
-    # ========== Batch 模式处理 ==========
-
-    async def _handle_start_batch(self, websocket, data):
-        """开始 batch 会话"""
-        session_id = data.get("session_id")
-        if not session_id:
-            await self._send_error(
-                websocket, "invalid_message", "缺少 session_id", fatal=True
-            )
-            return
-
-        try:
-            config = data.get("config", {})
-            self.sessions.create_batch_session(session_id, websocket, config)
-
-            await self._send_message(
-                websocket,
-                {
-                    "type": "started",
-                    "session_id": session_id,
-                    "mode": "batch",
-                    "timestamp": int(time.time() * 1000),
-                },
-            )
-        except ValueError as e:
-            await self._send_error(websocket, "session_exists", str(e), fatal=True)
-
-    async def _handle_end_batch(self, websocket, data):
-        """结束 batch 会话并返回结果"""
-        session_id = data.get("session_id")
-        session = self.sessions.get_session(session_id)
-
-        if not session:
-            await self._send_error(
-                websocket,
-                "session_not_found",
-                f"会话不存在: {session_id}",
-                fatal=True,
-            )
-            return
-
-        try:
-            audio_data = bytes(session["audio_buffer"])
-            if len(audio_data) == 0:
-                result_text = ""
-            else:
-                result = self.models.generate_batch(audio_data)
-                result_text = self.models.extract_text(result)
-
-            await self._send_message(
-                websocket,
-                {
-                    "type": "final_result",
-                    "session_id": session_id,
-                    "mode": "batch",
-                    "text": result_text,
-                    "duration": len(audio_data) / 32000.0,
-                    "timestamp": int(time.time() * 1000),
-                },
-            )
-
-            logger.info(f"Batch 会话完成: {session_id}, 文本长度: {len(result_text)}")
-        except Exception as e:
-            logger.error(f"Batch 识别失败: {e}")
-            logger.error(traceback.format_exc())
-            await self._send_error(
-                websocket, "internal_error", f"识别失败: {str(e)}", fatal=True
-            )
-        finally:
-            self.sessions.delete_session(session_id)
 
     # ========== Realtime 模式处理 ==========
 

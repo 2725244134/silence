@@ -40,20 +40,8 @@ def download_model(model_config, progress_callback=None):
 def main():
     """主函数：并行下载所有模型"""
     
-    # 模型配置
+    # 模型配置 - 只下载实时流式识别模型
     models = [
-        {
-            "name": "damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-            "type": "asr"
-        },
-        {
-            "name": "damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
-            "type": "vad"
-        },
-        {
-            "name": "damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
-            "type": "punc"
-        },
         {
             "name": "paraformer-zh-streaming",
             "type": "realtime_asr"

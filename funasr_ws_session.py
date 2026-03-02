@@ -21,9 +21,12 @@ class SessionManager:
     KEEP_BUFFER_SIZE = 1 * 1024 * 1024
 
     def create_session(self, session_id, mode, websocket, config):
-        """创建会话（统一方法）"""
+        """创建会话（只支持 realtime 模式）"""
         if session_id in self.sessions:
             raise ValueError(f"会话已存在: {session_id}")
+
+        if mode != "realtime":
+            raise ValueError(f"不支持的模式: {mode}，只支持 realtime")
 
         session = {
             "id": session_id,
@@ -33,22 +36,14 @@ class SessionManager:
             "audio_buffer": bytearray(),
             "created_at": time.time(),
             "last_activity": time.time(),
+            "cache": {},
+            "seq": 0,
+            "latest_text": "",
         }
 
-        if mode == "realtime":
-            session.update({
-                "cache": {},
-                "seq": 0,
-                "latest_text": "",
-            })
-
         self.sessions[session_id] = session
-        logger.info(f"{mode.capitalize()} 会话创建: {session_id}")
+        logger.info(f"Realtime 会话创建: {session_id}")
         return session
-
-    def create_batch_session(self, session_id, websocket, config):
-        """创建 batch 会话"""
-        return self.create_session(session_id, "batch", websocket, config)
 
     def create_realtime_session(self, session_id, websocket, config):
         """创建 realtime 会话"""
@@ -100,10 +95,5 @@ class SessionManager:
         """获取统计信息"""
         return {
             "total_sessions": len(self.sessions),
-            "batch_sessions": sum(
-                1 for s in self.sessions.values() if s["mode"] == "batch"
-            ),
-            "realtime_sessions": sum(
-                1 for s in self.sessions.values() if s["mode"] == "realtime"
-            ),
+            "realtime_sessions": len(self.sessions),  # 只有 realtime 模式
         }

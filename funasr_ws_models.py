@@ -31,36 +31,24 @@ class ModelManager:
 
     def __init__(self, damo_root=None):
         self.damo_root = damo_root or os.environ.get("DAMO_ROOT")
-        self.asr_model = None
-        self.vad_model = None
-        self.punc_model = None
-        self.realtime_asr_model = None
+        self.realtime_asr_model = None  # 只保留实时模型
         self.initialized = False
 
     async def initialize(self):
-        """初始化所有模型"""
+        """初始化模型 - 只加载实时流式识别模型"""
         try:
-            logger.info("开始加载模型...")
+            logger.info("开始加载实时流式识别模型...")
             from funasr import AutoModel
 
-            # 加载 batch 模式模型
-            logger.info("加载 ASR 模型...")
-            self.asr_model = AutoModel(
-                model=self._find_model("paraformer-zh"),
-                vad_model=self._find_model("fsmn-vad"),
-                punc_model=self._find_model("punc_ct-transformer"),
-                disable_update=True,
-            )
-
-            # 加载 realtime 模式模型
-            logger.info("加载 Realtime ASR 模型...")
+            # 只加载 realtime 流式模型
+            logger.info("加载 Realtime Streaming ASR 模型...")
             self.realtime_asr_model = AutoModel(
                 model=self._find_model("paraformer-zh-streaming"),
                 disable_update=True,
             )
 
             self.initialized = True
-            logger.info("所有模型加载完成")
+            logger.info("实时流式识别模型加载完成")
             return True
         except Exception as e:
             logger.error(f"模型加载失败: {e}")
@@ -86,15 +74,6 @@ class ModelManager:
                 return str(matches[0])
 
         return model_name
-
-    def generate_batch(self, audio_data):
-        """Batch 模式识别"""
-        if not self.asr_model:
-            raise RuntimeError("ASR 模型未加载")
-
-        with suppress_stdout():
-            result = self.asr_model.generate(input=audio_data, batch_size_s=300)
-        return result
 
     def generate_realtime_chunk(self, session, audio_chunk, is_final=False):
         """Realtime 模式识别片段"""
