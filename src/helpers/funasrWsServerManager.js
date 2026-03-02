@@ -116,40 +116,41 @@ class FunASRWebSocketServerManager {
       const projectRoot = path.join(__dirname, "../..");
       const useUv = await this._checkUvAvailable();
 
+      // 准备命令和参数
+      let command, args;
+      if (useUv) {
+        this.logger.info && this.logger.info("使用 uv run 启动服务器");
+        command = "uv";
+        args = [
+          "run",
+          "--directory",
+          projectRoot,
+          "python",
+          serverPath,
+          "--damo-root",
+          cachePath,
+          "--host",
+          this.host,
+          "--port",
+          this.port.toString(),
+        ];
+      } else {
+        this.logger.info && this.logger.info("使用直接 Python 启动服务器");
+        const pythonCmd = await this.baseManager.findPythonExecutable();
+        command = pythonCmd;
+        args = [
+          serverPath,
+          "--damo-root",
+          cachePath,
+          "--host",
+          this.host,
+          "--port",
+          this.port.toString(),
+        ];
+      }
+
       return new Promise((resolve, reject) => {
         this.logger.info && this.logger.info("启动 FunASR WebSocket 服务器...");
-
-        let command, args;
-        if (useUv) {
-          this.logger.info && this.logger.info("使用 uv run 启动服务器");
-          command = "uv";
-          args = [
-            "run",
-            "--directory",
-            projectRoot,
-            "python",
-            serverPath,
-            "--damo-root",
-            cachePath,
-            "--host",
-            this.host,
-            "--port",
-            this.port.toString(),
-          ];
-        } else {
-          this.logger.info && this.logger.info("使用直接 Python 启动服务器");
-          const pythonCmd = await this.baseManager.findPythonExecutable();
-          command = pythonCmd;
-          args = [
-            serverPath,
-            "--damo-root",
-            cachePath,
-            "--host",
-            this.host,
-            "--port",
-            this.port.toString(),
-          ];
-        }
 
         this.serverProcess = spawn(command, args, {
           stdio: ["ignore", "pipe", "pipe"],
