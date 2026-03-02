@@ -110,7 +110,10 @@
     "files": [
       "main.js",
       "preload.js",
-      "funasr_server.py",
+      "funasr_ws_server.py",
+      "funasr_ws_models.py",
+      "funasr_ws_session.py",
+      "funasr_ws_handler.py",
       "download_models.py",
       "evdev_hotkey_listener.py",
       "package.json",
@@ -125,7 +128,10 @@
       "!**/__pycache__/**/*"
     ],
     "asarUnpack": [
-      "funasr_server.py",
+      "funasr_ws_server.py",
+      "funasr_ws_models.py",
+      "funasr_ws_session.py",
+      "funasr_ws_handler.py",
       "download_models.py",
       "evdev_hotkey_listener.py",
       "node_modules/**/*ffmpeg-static*/**/*",

@@ -16,36 +16,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("toggle-dictation", callback);
   },
 
-  // FunASR语音识别
-  transcribeAudio: (audioData, options = {}) => ipcRenderer.invoke("transcribe-audio", audioData, options),
-  checkFunASRStatus: () => ipcRenderer.invoke("check-funasr-status"),
-  checkRealtimeFunASRStatus: () => ipcRenderer.invoke("check-realtime-funasr-status"),
+  // FunASR 安装
   installFunASR: () => ipcRenderer.invoke("install-funasr"),
-  restartFunasrServer: () => ipcRenderer.invoke("restart-funasr-server"),
-  restartRealtimeFunasrServer: () => ipcRenderer.invoke("restart-realtime-funasr-server"),
 
   // WebSocket 服务器
   checkWsServerStatus: () => ipcRenderer.invoke("check-ws-server-status"),
   getWsServerUrl: () => ipcRenderer.invoke("get-ws-server-url"),
   restartWsServer: () => ipcRenderer.invoke("restart-ws-server"),
 
-  // Realtime FunASR
-  startRealtimeTranscription: (config) => ipcRenderer.invoke("start-realtime-transcription", config),
-  appendRealtimeAudioChunk: (payload) => ipcRenderer.invoke("append-realtime-audio-chunk", payload),
-  finishRealtimeTranscription: (payload) => ipcRenderer.invoke("finish-realtime-transcription", payload),
-  cancelRealtimeTranscription: (payload) => ipcRenderer.invoke("cancel-realtime-transcription", payload),
-  onRealtimeTranscriptionUpdate: (callback) => {
-    ipcRenderer.on("realtime-transcription-update", callback);
-    return () => ipcRenderer.removeListener("realtime-transcription-update", callback);
-  },
-  onRealtimeTranscriptionError: (callback) => {
-    ipcRenderer.on("realtime-transcription-error", callback);
-    return () => ipcRenderer.removeListener("realtime-transcription-error", callback);
-  },
-
   // 模型文件管理
   checkModelFiles: () => ipcRenderer.invoke("check-model-files"),
-  getDownloadProgress: () => ipcRenderer.invoke("get-download-progress"),
   downloadModels: () => ipcRenderer.invoke("download-models"),
 
   // AI文本处理
@@ -125,10 +105,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("transcription-update", callback);
     return () => ipcRenderer.removeListener("transcription-update", callback);
   },
-  onProcessingUpdate: (callback) => {
-    ipcRenderer.on("processing-update", callback);
-    return () => ipcRenderer.removeListener("processing-update", callback);
-  },
   onError: (callback) => {
     ipcRenderer.on("error", callback);
     return () => ipcRenderer.removeListener("error", callback);
@@ -161,12 +137,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   convertAudioFormat: (audioData, targetFormat) => 
     ipcRenderer.invoke("convert-audio-format", audioData, targetFormat),
   enhanceAudio: (audioData) => ipcRenderer.invoke("enhance-audio", audioData),
-
-  // 模型管理
-  downloadModel: (modelName) => ipcRenderer.invoke("download-model", modelName),
-  getAvailableModels: () => ipcRenderer.invoke("get-available-models"),
-  getCurrentModel: () => ipcRenderer.invoke("get-current-model"),
-  switchModel: (modelName) => ipcRenderer.invoke("switch-model", modelName),
 
   // 模型下载进度监听
   onModelDownloadProgress: (callback) => {

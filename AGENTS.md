@@ -36,7 +36,7 @@
 - 全局热键通过`evdev_hotkey_listener.py`监听（`uv run python`启动）
 - 热键可通过设置项`global_hotkey`配置（当前支持`ALT+D`与`F1-F12`）
 - 录音状态通过`hotkeyManager.js`在主进程和渲染进程间同步
-- 新增模型管理IPC接口：`check-model-files`, `download-models`, `get-download-progress`
+- 模型管理IPC接口：`check-model-files`, `download-models`
 - 模型下载进度通过`model-download-progress`事件实时推送
 - CLI触发服务通过Unix socket暴露（`/tmp/ququ-trigger-<uid>.sock`）
 

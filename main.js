@@ -154,6 +154,10 @@ if (cliCommand) {
     process.exit(code);
   });
 } else {
+  const hasSingleInstanceLock = app.requestSingleInstanceLock();
+  if (!hasSingleInstanceLock) {
+    app.quit();
+  } else {
   // 在初始化管理器之前设置PATH
   setupProductionPath();
 
@@ -191,6 +195,17 @@ if (cliCommand) {
     logger,
   });
 
+  app.on("second-instance", () => {
+    const mainWindow = windowManager.mainWindow;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+
   // 主应用启动函数
   async function startApp() {
   logger.info('应用启动开始', {
@@ -218,11 +233,6 @@ if (cliCommand) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
-  // 在启动时初始化FunASR管理器（不等待以避免阻塞）
-  logger.info('开始初始化FunASR管理器...');
-  funasrManager.initializeAtStartup().catch((err) => {
-    logger.warn("FunASR在启动时不可用，这不是关键问题", err);
-  });
   logger.info('开始初始化 WebSocket 服务器...');
   wsServerManager.initializeAtStartup().catch((err) => {
     logger.warn("WebSocket 服务器在启动时不可用，这不是关键问题", err);
@@ -309,4 +319,5 @@ if (cliCommand) {
     cliTriggerServer,
     logger
   };
+  }
 }
