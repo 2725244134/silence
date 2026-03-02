@@ -49,14 +49,15 @@ class FunASRManager {
 
 
   getFunASRServerPath() {
-    // 获取FunASR服务器脚本路径
+    // 获取FunASR服务器脚本路径（已废弃，使用 WebSocket 服务器）
+    // 保留此方法以防旧代码引用
     if (process.env.NODE_ENV === "development") {
-      return path.join(__dirname, "..", "..", "funasr_server.py");
+      return path.join(__dirname, "..", "..", "funasr_ws_server.py");
     } else {
       return path.join(
         process.resourcesPath,
         "app.asar.unpacked",
-        "funasr_server.py"
+        "funasr_ws_server.py"
       );
     }
   }
@@ -548,13 +549,10 @@ class FunASRManager {
   }
 
   async preInitializeModels() {
-    // 如果已经在初始化或已完成，直接返回
-    if (this.initializationPromise) {
-      return this.initializationPromise;
-    }
-
-    this.initializationPromise = this._startFunASRServer();
-    return this.initializationPromise;
+    // 旧的 stdin/stdout 服务器已废弃，使用 WebSocket 服务器
+    // 保留此方法以防旧代码引用，但不再启动服务器
+    this.logger.info && this.logger.info('preInitializeModels: 已废弃，使用 WebSocket 服务器');
+    return Promise.resolve();
   }
 
   async _startFunASRServer() {
