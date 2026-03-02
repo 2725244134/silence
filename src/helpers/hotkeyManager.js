@@ -247,6 +247,8 @@ class HotkeyManager {
       }
       this.listenerProcess = null;
       this.activeEvdevKey = null;
+      this.registeredHotkeys.clear();
+      this.lastHotkeyTrigger.clear();
       settleStartup(false);
     };
 
@@ -256,6 +258,8 @@ class HotkeyManager {
       }
       this.listenerProcess = null;
       this.activeEvdevKey = null;
+      this.registeredHotkeys.clear();
+      this.lastHotkeyTrigger.clear();
       if (!startupSettled) {
         settleStartup(false);
       }
@@ -318,7 +322,17 @@ class HotkeyManager {
 
     if (this.registeredHotkeys.has(hotkey)) {
       this.registeredHotkeys.set(hotkey, callback);
-      return true;
+      if (this.listenerProcess && this.activeEvdevKey === evdevCombo) {
+        return true;
+      }
+      if (this.logger && this.logger.warn) {
+        this.logger.warn("检测到热键状态与监听器状态不一致，尝试重启监听器", {
+          hotkey,
+          evdevCombo,
+          hasListenerProcess: Boolean(this.listenerProcess),
+          activeEvdevKey: this.activeEvdevKey,
+        });
+      }
     }
 
     const started = await this.startEvdevListener(hotkey, evdevCombo);

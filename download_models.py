@@ -53,11 +53,15 @@ def main():
         {
             "name": "damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
             "type": "punc"
+        },
+        {
+            "name": "paraformer-zh-streaming",
+            "type": "realtime_asr"
         }
     ]
     
     # 进度跟踪
-    progress = {"asr": 0, "vad": 0, "punc": 0}
+    progress = {model["type"]: 0 for model in models}
     results = {}
     completed_count = 0
     total_count = len(models)

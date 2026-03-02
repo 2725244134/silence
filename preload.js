@@ -17,10 +17,31 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // FunASR语音识别
-  transcribeAudio: (audioData) => ipcRenderer.invoke("transcribe-audio", audioData),
+  transcribeAudio: (audioData, options = {}) => ipcRenderer.invoke("transcribe-audio", audioData, options),
   checkFunASRStatus: () => ipcRenderer.invoke("check-funasr-status"),
+  checkRealtimeFunASRStatus: () => ipcRenderer.invoke("check-realtime-funasr-status"),
   installFunASR: () => ipcRenderer.invoke("install-funasr"),
   restartFunasrServer: () => ipcRenderer.invoke("restart-funasr-server"),
+  restartRealtimeFunasrServer: () => ipcRenderer.invoke("restart-realtime-funasr-server"),
+
+  // WebSocket 服务器
+  checkWsServerStatus: () => ipcRenderer.invoke("check-ws-server-status"),
+  getWsServerUrl: () => ipcRenderer.invoke("get-ws-server-url"),
+  restartWsServer: () => ipcRenderer.invoke("restart-ws-server"),
+
+  // Realtime FunASR
+  startRealtimeTranscription: (config) => ipcRenderer.invoke("start-realtime-transcription", config),
+  appendRealtimeAudioChunk: (payload) => ipcRenderer.invoke("append-realtime-audio-chunk", payload),
+  finishRealtimeTranscription: (payload) => ipcRenderer.invoke("finish-realtime-transcription", payload),
+  cancelRealtimeTranscription: (payload) => ipcRenderer.invoke("cancel-realtime-transcription", payload),
+  onRealtimeTranscriptionUpdate: (callback) => {
+    ipcRenderer.on("realtime-transcription-update", callback);
+    return () => ipcRenderer.removeListener("realtime-transcription-update", callback);
+  },
+  onRealtimeTranscriptionError: (callback) => {
+    ipcRenderer.on("realtime-transcription-error", callback);
+    return () => ipcRenderer.removeListener("realtime-transcription-error", callback);
+  },
 
   // 模型文件管理
   checkModelFiles: () => ipcRenderer.invoke("check-model-files"),

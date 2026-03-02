@@ -67,23 +67,35 @@ def parse_combo(combo: str):
     return trigger_key, modifier_groups, watched_codes, tokens
 
 
-def open_keyboard_devices(target_key_code: int, exclude_paths=None):
+def open_keyboard_devices(target_key_code: int, exclude_paths=None, exclusive=False):
     excluded = set(exclude_paths or [])
     devices = []
     for dev_path in list_devices():
         if dev_path in excluded:
             continue
+        dev = None
         try:
             dev = InputDevice(dev_path)
             caps = dev.capabilities().get(ecodes.EV_KEY, [])
             if target_key_code in caps:
-                dev.grab()
+                if exclusive:
+                    dev.grab()
                 devices.append(dev)
             else:
                 dev.close()
         except PermissionError:
+            if dev is not None:
+                try:
+                    dev.close()
+                except OSError:
+                    pass
             continue
         except OSError:
+            if dev is not None:
+                try:
+                    dev.close()
+                except OSError:
+                    pass
             continue
     return devices
 
@@ -103,6 +115,7 @@ def main():
     parser = argparse.ArgumentParser(description="QuQu evdev 热键监听")
     parser.add_argument("--combo", default="ALT+D", help="监听组合键，如 ALT+D")
     parser.add_argument("--debounce-ms", type=int, default=200, help="防抖毫秒")
+    parser.add_argument("--exclusive", action="store_true", help="独占抓取设备（默认关闭）")
     args = parser.parse_args()
 
     signal.signal(signal.SIGINT, _handle_signal)
@@ -114,7 +127,7 @@ def main():
         emit({"type": "error", "error": str(exc)})
         return 1
 
-    devices = open_keyboard_devices(key_code)
+    devices = open_keyboard_devices(key_code, exclusive=args.exclusive)
     if not devices:
         emit({
             "type": "error",
@@ -127,6 +140,7 @@ def main():
             "type": "ready",
             "combo": "+".join(normalized_tokens),
             "devices": [f"{d.path}:{d.name}" for d in devices],
+            "exclusive": bool(args.exclusive),
         }
     )
 
@@ -141,7 +155,7 @@ def main():
     try:
         while RUNNING:
             if not devices:
-                replenished = open_keyboard_devices(key_code)
+                replenished = open_keyboard_devices(key_code, exclusive=args.exclusive)
                 if replenished:
                     devices.extend(replenished)
                     pressed_codes.clear()
@@ -150,6 +164,7 @@ def main():
                             "type": "ready",
                             "combo": "+".join(normalized_tokens),
                             "devices": [f"{d.path}:{d.name}" for d in devices],
+                            "exclusive": bool(args.exclusive),
                         }
                     )
                 time.sleep(0.2)
@@ -220,7 +235,11 @@ def main():
             if now - last_rescan_at >= rescan_interval_sec:
                 last_rescan_at = now
                 existing_paths = {d.path for d in devices}
-                new_devices = open_keyboard_devices(key_code, exclude_paths=existing_paths)
+                new_devices = open_keyboard_devices(
+                    key_code,
+                    exclude_paths=existing_paths,
+                    exclusive=args.exclusive,
+                )
                 if new_devices:
                     devices.extend(new_devices)
                     emit(
@@ -228,6 +247,7 @@ def main():
                             "type": "ready",
                             "combo": "+".join(normalized_tokens),
                             "devices": [f"{d.path}:{d.name}" for d in devices],
+                            "exclusive": bool(args.exclusive),
                         }
                     )
     finally:

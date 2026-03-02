@@ -26,6 +26,7 @@ const WindowManager = require("./src/helpers/windowManager");
 const DatabaseManager = require("./src/helpers/database");
 const ClipboardManager = require("./src/helpers/clipboard");
 const FunASRManager = require("./src/helpers/funasrManager");
+const FunASRWebSocketServerManager = require("./src/helpers/funasrWsServerManager");
 const TrayManager = require("./src/helpers/tray");
 const HotkeyManager = require("./src/helpers/hotkeyManager");
 const IPCHandlers = require("./src/helpers/ipcHandlers");
@@ -166,8 +167,9 @@ if (cliCommand) {
   const environmentManager = new EnvironmentManager();
   const windowManager = new WindowManager();
   const databaseManager = new DatabaseManager();
-  const clipboardManager = new ClipboardManager(logger); // 传递logger实例
-  const funasrManager = new FunASRManager(logger); // 传递logger实例
+  const clipboardManager = new ClipboardManager(logger);
+  const funasrManager = new FunASRManager(logger);
+  const wsServerManager = new FunASRWebSocketServerManager(logger, funasrManager);
   const trayManager = new TrayManager();
   const hotkeyManager = new HotkeyManager(logger);
   const cliTriggerServer = new CliTriggerServer(logger);
@@ -182,10 +184,11 @@ if (cliCommand) {
     databaseManager,
     clipboardManager,
     funasrManager,
+    wsServerManager,
     windowManager,
     hotkeyManager,
     cliTriggerServer,
-    logger, // 传递logger实例
+    logger,
   });
 
   // 主应用启动函数
@@ -219,6 +222,10 @@ if (cliCommand) {
   logger.info('开始初始化FunASR管理器...');
   funasrManager.initializeAtStartup().catch((err) => {
     logger.warn("FunASR在启动时不可用，这不是关键问题", err);
+  });
+  logger.info('开始初始化 WebSocket 服务器...');
+  wsServerManager.initializeAtStartup().catch((err) => {
+    logger.warn("WebSocket 服务器在启动时不可用，这不是关键问题", err);
   });
 
   // 创建主窗口
@@ -284,6 +291,9 @@ if (cliCommand) {
   app.on("will-quit", () => {
     hotkeyManager.unregisterAllHotkeys();
     cliTriggerServer.stop();
+    wsServerManager.stopServer().catch((err) => {
+      logger.warn("关闭 WebSocket 服务器失败", err);
+    });
   });
 
   // 导出管理器供其他模块使用
@@ -293,6 +303,7 @@ if (cliCommand) {
     databaseManager,
     clipboardManager,
     funasrManager,
+    wsServerManager,
     trayManager,
     hotkeyManager,
     cliTriggerServer,

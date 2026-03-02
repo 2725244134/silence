@@ -6,15 +6,55 @@ class IPCHandlers {
     this.databaseManager = managers.databaseManager;
     this.clipboardManager = managers.clipboardManager;
     this.funasrManager = managers.funasrManager;
+    this.wsServerManager = managers.wsServerManager;
     this.windowManager = managers.windowManager;
     this.hotkeyManager = managers.hotkeyManager;
     this.cliTriggerServer = managers.cliTriggerServer;
-    this.logger = managers.logger; // 添加logger引用
-    
+    this.logger = managers.logger;
+
+    this.modelServices = {
+      "funasr-offline": this.funasrManager,
+    };
+
     // 跟踪F2热键注册状态
     this.f2RegisteredSenders = new Set();
-    
+
     this.setupHandlers();
+  }
+
+  _checkRateLimit(handlerName, senderId) {
+    const config = this.RATE_LIMIT_CONFIG[handlerName];
+    if (!config) {
+      return true; // 无限制
+    }
+
+    if (!this.rateLimiters.has(handlerName)) {
+      this.rateLimiters.set(handlerName, new Map());
+    }
+
+    const handlerLimits = this.rateLimiters.get(handlerName);
+    const now = Date.now();
+
+    if (!handlerLimits.has(senderId)) {
+      handlerLimits.set(senderId, { count: 1, resetTime: now + config.windowMs });
+      return true;
+    }
+
+    const limit = handlerLimits.get(senderId);
+
+    if (now > limit.resetTime) {
+      // 重置窗口
+      limit.count = 1;
+      limit.resetTime = now + config.windowMs;
+      return true;
+    }
+
+    if (limit.count >= config.maxRequests) {
+      return false; // 超过限制
+    }
+
+    limit.count++;
+    return true;
   }
 
   setupHandlers() {
@@ -102,6 +142,155 @@ class IPCHandlers {
     // 音频转录相关
     ipcMain.handle("transcribe-audio", async (event, audioData, options) => {
       return await this.funasrManager.transcribeAudio(audioData, options);
+    });
+
+    ipcMain.handle("start-realtime-transcription", async (event, config = {}) => {
+      if (!this._checkRateLimit('start-realtime-transcription', event.sender.id)) {
+        return { success: false, error: "请求过于频繁，请稍后再试" };
+      }
+
+      if (!this.realtimeFunasrManager) {
+        return { success: false, error: "Realtime FunASR管理器不可用" };
+      }
+
+      try {
+        const result = await this.realtimeFunasrManager.startSession(config);
+        if (result.success) {
+          const wavName = result.wav_name || result.session_id;
+          event.sender.send("realtime-transcription-update", {
+            session_id: result.session_id,
+            wav_name: wavName,
+            mode: result.mode || "2pass",
+            type: "state",
+            state: "started",
+            is_final: false,
+          });
+        }
+        return result;
+      } catch (error) {
+        const payload = {
+          session_id: config.session_id || null,
+          code: "start_failed",
+          error: error.message,
+          fatal: true,
+        };
+        event.sender.send("realtime-transcription-error", payload);
+        return { success: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle("append-realtime-audio-chunk", async (event, payload = {}) => {
+      if (!this._checkRateLimit('append-realtime-audio-chunk', event.sender.id)) {
+        return { success: false, error: "请求过于频繁，请稍后再试" };
+      }
+
+      if (!this.realtimeFunasrManager) {
+        return { success: false, error: "Realtime FunASR管理器不可用" };
+      }
+
+      try {
+        const result = await this.realtimeFunasrManager.appendChunk(payload);
+        if (result.success) {
+          const wavName = result.wav_name || payload.wav_name || payload.session_id;
+          event.sender.send("realtime-transcription-update", {
+            session_id: payload.session_id || payload.wav_name,
+            wav_name: wavName,
+            mode: result.mode || "2pass",
+            type: "partial",
+            seq: payload.seq || 0,
+            text: result.text || "",
+            is_final: false,
+          });
+        } else {
+          event.sender.send("realtime-transcription-error", {
+            session_id: payload.session_id || null,
+            code: "append_failed",
+            error: result.error || "实时音频片段处理失败",
+            fatal: false,
+          });
+        }
+        return result;
+      } catch (error) {
+        event.sender.send("realtime-transcription-error", {
+          session_id: payload.session_id || null,
+          code: "append_failed",
+          error: error.message,
+          fatal: false,
+        });
+        return { success: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle("finish-realtime-transcription", async (event, payload = {}) => {
+      if (!this._checkRateLimit('finish-realtime-transcription', event.sender.id)) {
+        return { success: false, error: "请求过于频繁，请稍后再试" };
+      }
+
+      if (!this.realtimeFunasrManager) {
+        return { success: false, error: "Realtime FunASR管理器不可用" };
+      }
+
+      try {
+        const result = await this.realtimeFunasrManager.finishSession(payload);
+        if (result.success) {
+          const wavName = result.wav_name || payload.wav_name || payload.session_id;
+          event.sender.send("realtime-transcription-update", {
+            session_id: payload.session_id || payload.wav_name,
+            wav_name: wavName,
+            mode: result.mode || "2pass",
+            type: "final",
+            seq: payload.seq || 0,
+            text: result.text || "",
+            is_final: true,
+          });
+        } else {
+          event.sender.send("realtime-transcription-error", {
+            session_id: payload.session_id || null,
+            code: "finish_failed",
+            error: result.error || "实时转录完成失败",
+            fatal: true,
+          });
+        }
+        return result;
+      } catch (error) {
+        event.sender.send("realtime-transcription-error", {
+          session_id: payload.session_id || null,
+          code: "finish_failed",
+          error: error.message,
+          fatal: true,
+        });
+        return { success: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle("cancel-realtime-transcription", async (event, payload = {}) => {
+      if (!this._checkRateLimit('cancel-realtime-transcription', event.sender.id)) {
+        return { success: false, error: "请求过于频繁，请稍后再试" };
+      }
+
+      if (!this.realtimeFunasrManager) {
+        return { success: false, error: "Realtime FunASR管理器不可用" };
+      }
+
+      try {
+        const result = await this.realtimeFunasrManager.cancelSession(payload);
+        event.sender.send("realtime-transcription-update", {
+          session_id: payload.session_id || payload.wav_name || null,
+          wav_name: payload.wav_name || payload.session_id || null,
+          type: "state",
+          state: "cancelled",
+          is_final: true,
+        });
+        return result;
+      } catch (error) {
+        event.sender.send("realtime-transcription-error", {
+          session_id: payload.session_id || null,
+          code: "cancel_failed",
+          error: error.message,
+          fatal: false,
+        });
+        return { success: false, error: error.message };
+      }
     });
 
     // 数据库相关
@@ -723,11 +912,20 @@ class IPCHandlers {
       return {
         models: [
           {
-            name: "paraformer-large",
+            name: "funasr-realtime",
+            displayName: "Paraformer Streaming (Realtime)",
+            type: "asr_realtime",
+            size: "约200MB",
+            description: "FunASR实时流式语音识别模型",
+            mode: "realtime",
+          },
+          {
+            name: "funasr-offline",
             displayName: "Paraformer Large (ASR)",
             type: "asr",
             size: "840MB",
-            description: "大型中文语音识别模型"
+            description: "离线整段中文语音识别模型",
+            mode: "offline",
           },
           {
             name: "fsmn-vad",
@@ -748,20 +946,36 @@ class IPCHandlers {
     });
 
     ipcMain.handle("get-current-model", async () => {
+      const mode = await this.databaseManager.getSetting("transcription_mode", "realtime");
       const status = await this.funasrManager.checkStatus();
+      const realtimeStatus = this.realtimeFunasrManager
+        ? await this.realtimeFunasrManager.checkStatus()
+        : { success: false, error: "Realtime FunASR管理器不可用" };
+
       return {
-        model: "paraformer-large",
-        status: status.models_downloaded ? "ready" : "not_downloaded",
-        details: status
+        model: mode === "realtime" ? "funasr-realtime" : "funasr-offline",
+        mode,
+        status: mode === "realtime"
+          ? (realtimeStatus.models_initialized ? "ready" : "not_ready")
+          : (status.models_downloaded ? "ready" : "not_downloaded"),
+        details: {
+          offline: status,
+          realtime: realtimeStatus,
+        }
       };
     });
 
     ipcMain.handle("switch-model", (event, modelName) => {
-      // FunASR目前使用固定模型组合，暂不支持切换
-      return {
-        success: false,
-        error: "FunASR使用固定模型组合，暂不支持切换单个模型"
-      };
+      const normalized = String(modelName || "").trim().toLowerCase();
+      if (normalized === "funasr-realtime" || normalized === "realtime") {
+        this.databaseManager.setSetting("transcription_mode", "realtime");
+        return { success: true, mode: "realtime" };
+      }
+      if (normalized === "funasr-offline" || normalized === "offline" || normalized === "paraformer-large") {
+        this.databaseManager.setSetting("transcription_mode", "offline");
+        return { success: true, mode: "offline" };
+      }
+      return { success: false, error: `不支持的模型: ${modelName}` };
     });
 
     // 性能监控
@@ -974,6 +1188,60 @@ class IPCHandlers {
           success: false,
           error: error.message
         };
+      }
+    });
+
+    ipcMain.handle("restart-realtime-funasr-server", async () => {
+      if (!this.realtimeFunasrManager) {
+        return { success: false, error: "Realtime FunASR管理器不可用" };
+      }
+
+      try {
+        this.logger && this.logger.info && this.logger.info("手动重启Realtime FunASR服务器");
+        return await this.realtimeFunasrManager.restartServer();
+      } catch (error) {
+        this.logger && this.logger.error && this.logger.error("重启Realtime FunASR服务器失败", error);
+        return { success: false, error: error.message };
+      }
+    });
+
+    // WebSocket 服务器相关
+    ipcMain.handle("check-ws-server-status", async () => {
+      if (!this.wsServerManager) {
+        return {
+          success: false,
+          error: "WebSocket 服务器管理器不可用",
+          server_ready: false,
+        };
+      }
+
+      return await this.wsServerManager.checkStatus();
+    });
+
+    ipcMain.handle("get-ws-server-url", async () => {
+      if (!this.wsServerManager) {
+        return { success: false, error: "WebSocket 服务器管理器不可用" };
+      }
+
+      const url = this.wsServerManager.getServerUrl();
+      if (url) {
+        return { success: true, url };
+      } else {
+        return { success: false, error: "服务器未就绪" };
+      }
+    });
+
+    ipcMain.handle("restart-ws-server", async () => {
+      if (!this.wsServerManager) {
+        return { success: false, error: "WebSocket 服务器管理器不可用" };
+      }
+
+      try {
+        this.logger && this.logger.info && this.logger.info("手动重启 WebSocket 服务器");
+        return await this.wsServerManager.restartServer();
+      } catch (error) {
+        this.logger && this.logger.error && this.logger.error("重启 WebSocket 服务器失败", error);
+        return { success: false, error: error.message };
       }
     });
   }

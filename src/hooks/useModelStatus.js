@@ -41,8 +41,18 @@ export const useModelStatus = () => {
   const checkServerStatus = useCallback(async () => {
     try {
       if (window.electronAPI) {
-        const status = await window.electronAPI.checkFunASRStatus();
-        return status;
+        const [offline, realtime] = await Promise.all([
+          window.electronAPI.checkFunASRStatus(),
+          window.electronAPI.checkRealtimeFunASRStatus
+            ? window.electronAPI.checkRealtimeFunASRStatus()
+            : Promise.resolve({ success: false, error: 'Realtime API 不可用' })
+        ]);
+
+        return {
+          success: Boolean(offline?.success || realtime?.success),
+          offline,
+          realtime,
+        };
       }
       return { success: false };
     } catch (error) {
@@ -68,7 +78,7 @@ export const useModelStatus = () => {
       const modelFiles = await checkModelFiles();
       const serverStatus = await checkServerStatus();
       
-      if (!modelFiles.success) {
+      if (!modelFiles.success && !serverStatus?.realtime?.models_downloaded) {
         setModelStatus(prev => ({
           ...prev,
           isLoading: false,
@@ -78,9 +88,12 @@ export const useModelStatus = () => {
         return;
       }
 
-      const modelsDownloaded = modelFiles.models_downloaded;
-      const missingModels = modelFiles.missing_models || [];
-      
+      const offlineReady = Boolean(serverStatus?.offline?.success && serverStatus?.offline?.models_initialized);
+      const realtimeReady = Boolean(serverStatus?.realtime?.success && serverStatus?.realtime?.models_initialized);
+      const realtimeDownloaded = Boolean(serverStatus?.realtime?.models_downloaded);
+      const modelsDownloaded = Boolean(modelFiles.models_downloaded || realtimeDownloaded);
+      const missingModels = modelsDownloaded ? [] : (modelFiles.missing_models || []);
+
       if (!modelsDownloaded) {
         // 模型未下载
         setModelStatus(prev => ({
@@ -93,7 +106,10 @@ export const useModelStatus = () => {
           progress: 0,
           stage: 'need_download'
         }));
-      } else if (serverStatus.success && serverStatus.models_initialized) {
+        return;
+      }
+
+      if (offlineReady || realtimeReady) {
         // 模型已下载且服务器就绪
         setModelStatus(prev => ({
           ...prev,
@@ -105,7 +121,7 @@ export const useModelStatus = () => {
           progress: 100,
           stage: 'ready'
         }));
-      } else if (serverStatus.initializing) {
+      } else if (serverStatus?.offline?.initializing || serverStatus?.realtime?.initializing) {
         // 模型已下载，正在加载
         setModelStatus(prev => ({
           ...prev,
@@ -119,13 +135,14 @@ export const useModelStatus = () => {
         }));
       } else {
         // 模型已下载但服务器未就绪
+        const serverError = serverStatus?.realtime?.error || serverStatus?.offline?.error;
         setModelStatus(prev => ({
           ...prev,
           isLoading: false,
           isReady: false,
           modelsDownloaded: true,
           missingModels: [],
-          error: serverStatus.error || '服务器未就绪',
+          error: serverError || '服务器未就绪',
           progress: 0,
           stage: 'error'
         }));
@@ -180,6 +197,9 @@ export const useModelStatus = () => {
         try {
           console.log('模型下载完成，重启FunASR服务器...');
           await window.electronAPI.restartFunasrServer();
+          if (window.electronAPI.restartRealtimeFunasrServer) {
+            await window.electronAPI.restartRealtimeFunasrServer();
+          }
           console.log('FunASR服务器重启完成');
           
           // 重启后等待一段时间再检查状态

@@ -5,6 +5,7 @@ import { LoadingDots } from "./components/ui/loading-dots";
 import { useHotkey } from "./hooks/useHotkey";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useRecording } from "./hooks/useRecording";
+import { useWsRealtime } from "./hooks/useWsRealtime";
 import { useTextProcessing } from "./hooks/useTextProcessing";
 import { useModelStatus } from "./hooks/useModelStatus";
 import { usePermissions } from "./hooks/usePermissions";
@@ -220,10 +221,15 @@ export default function App() {
   const [processedText, setProcessedText] = useState("");
   const [showTextArea, setShowTextArea] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [transcriptionMode, setTranscriptionMode] = useState('realtime');
   
   const { isDragging, handleMouseDown, handleMouseMove, handleMouseUp, handleClick } = useWindowDrag();
   const modelStatus = useModelStatus();
-  
+
+  const standardRecording = useRecording();
+  const realtimeRecording = useWsRealtime();
+  const activeRecording = transcriptionMode === 'realtime' ? realtimeRecording : standardRecording;
+
   const {
     isRecording,
     isProcessing: isRecordingProcessing,
@@ -231,13 +237,30 @@ export default function App() {
     startRecording,
     stopRecording,
     error: recordingError
-  } = useRecording();
+  } = activeRecording;
   
   const {
     processText,
     isProcessing: isTextProcessing,
     error: textProcessingError
   } = useTextProcessing();
+
+  useEffect(() => {
+    const loadTranscriptionMode = async () => {
+      if (!window.electronAPI?.getSetting) {
+        return;
+      }
+
+      try {
+        const mode = await window.electronAPI.getSetting('transcription_mode', 'realtime');
+        setTranscriptionMode(mode === 'offline' ? 'offline' : 'realtime');
+      } catch (error) {
+        console.warn('读取转录模式失败，使用默认realtime模式', error);
+      }
+    };
+
+    loadTranscriptionMode();
+  }, []);
 
   // 防重复粘贴的引用
   const lastPasteRef = useRef({ text: '', timestamp: 0 });
@@ -281,6 +304,12 @@ export default function App() {
   // 处理录音完成（FunASR识别完成）
   const handleRecordingComplete = useCallback(async (transcriptionResult) => {
     console.log("🎤 handleRecordingComplete 被调用:", transcriptionResult);
+    if (transcriptionResult?.is_partial) {
+      setOriginalText(transcriptionResult.text || "");
+      setShowTextArea(true);
+      return;
+    }
+
     if (transcriptionResult.success && transcriptionResult.text) {
       console.log("✅ 转录成功，文本:", transcriptionResult.text);
       // 立即显示FunASR识别的原始文本
@@ -295,11 +324,11 @@ export default function App() {
       
       // 注意：不在这里保存到数据库，由 useRecording.js 统一处理保存逻辑
 
-      toast.success("🎤 语音识别完成，AI正在优化文本...");
+      toast.success(`🎤 ${transcriptionMode === 'realtime' ? '实时识别' : '语音识别'}完成，AI正在优化文本...`);
     } else {
       console.log("❌ 转录失败或无文本:", transcriptionResult);
     }
-  }, []);
+  }, [transcriptionMode]);
 
   // 处理AI优化完成
   const handleAIOptimizationComplete = useCallback(async (optimizedResult) => {
@@ -620,13 +649,13 @@ export default function App() {
       case "idle":
         return {
           className: `${buttonStyle} cursor-pointer`,
-          tooltip: `按 [${hotkey}] 开始录音`,
+          tooltip: `按 [${hotkey}] 开始${transcriptionMode === 'realtime' ? '实时' : ''}录音`,
           disabled: false
         };
       case "hover":
         return {
           className: `${buttonStyle} scale-105 shadow-2xl cursor-pointer`,
-          tooltip: `按 [${hotkey}] 开始录音`,
+          tooltip: `按 [${hotkey}] 开始${transcriptionMode === 'realtime' ? '实时' : ''}录音`,
           disabled: false
         };
       case "recording":
@@ -745,11 +774,11 @@ export default function App() {
             ) : micState === "recording" ? (
               "正在录音，再次点击停止"
             ) : micState === "processing" ? (
-              "正在识别语音..."
+              transcriptionMode === 'realtime' ? "正在完成实时识别..." : "正在识别语音..."
             ) : micState === "optimizing" ? (
               "AI正在优化文本，请稍候..."
             ) : (
-              `点击麦克风或按 ${hotkey} 开始录音`
+              `当前模式：${transcriptionMode === 'realtime' ? '实时识别' : '离线识别'}，点击麦克风或按 ${hotkey} 开始录音`
             )}
           </p>
         </div>
