@@ -13,12 +13,12 @@
 - `pnpm run dev` - 同时运行渲染进程(Vite)和主进程(Electron)
 - `pnpm run dev:renderer` - Vite开发服务器必须从`src/`目录运行(不是根目录)
 - `pnpm run build:renderer` - 任何Electron构建命令之前都必须先执行此命令
-- `pnpm run prepare:python` - 下载并准备嵌入式Python环境(包含所有依赖)
-- `pnpm run prepare:python:info` - 查看嵌入式Python环境信息
-- `pnpm run test:python` - 测试嵌入式Python环境是否正常工作
-- `pnpm run test:python:info` - 显示Python环境测试详细信息
-- `pnpm run clean` - 清理构建文件和Python环境
-- 所有构建命令(`build:mac`, `build:win`, `build:linux`)现在自动执行`prepare:python`
+- `pnpm run prepare:python` - 使用`uv`同步Python环境并下载FunASR模型
+- `pnpm run prepare:python:uv` - 同`prepare:python`，显式使用`uv`
+- `pnpm run test:python` - 快速测试Python依赖是否可用
+- `pnpm start -- --status` - 通过应用本体查看CLI触发服务状态（开发环境）
+- `pnpm start -- --trigger` - 通过应用本体触发一次听写热键事件（开发环境）
+- `pnpm run clean` - 清理构建文件
 
 ## 关键架构模式
 
@@ -33,10 +33,12 @@
 
 ### IPC架构(非标准)
 - 所有Electron IPC处理器集中在`src/helpers/ipcHandlers.js`
-- F2热键使用自定义双击检测，带发送者跟踪以防止内存泄漏
+- 全局热键通过`evdev_hotkey_listener.py`监听（`uv run python`启动）
+- 热键可通过设置项`global_hotkey`配置（当前支持`ALT+D`与`F1-F12`）
 - 录音状态通过`hotkeyManager.js`在主进程和渲染进程间同步
 - 新增模型管理IPC接口：`check-model-files`, `download-models`, `get-download-progress`
 - 模型下载进度通过`model-download-progress`事件实时推送
+- CLI触发服务通过Unix socket暴露（`/tmp/ququ-trigger-<uid>.sock`）
 
 ### 窗口管理
 - 主窗口和控制面板是独立的BrowserWindow实例
@@ -53,11 +55,8 @@
 ### 文件组织
 - `src/helpers/`中的文件是管理器类(不是工具函数)
 - `src/hooks/`中的钩子遵循Electron集成的自定义模式
-- Python脚本(`funasr_server.py`, `download_models.py`)在项目根目录，不在src/
-- `scripts/`目录包含构建时脚本：
-  - `prepare-embedded-python.js` - 嵌入式Python环境准备
-  - `test-embedded-python.js` - Python环境测试和验证
-- `python/`目录包含嵌入式Python运行时(构建时生成，在.gitignore中)
+- Python脚本(`funasr_server.py`, `download_models.py`, `evdev_hotkey_listener.py`)在项目根目录，不在src/
+- `scripts/`目录包含构建辅助脚本
 
 ### 环境变量
 - `ELECTRON_USER_DATA`由主进程设置，供Python脚本日志使用
@@ -80,26 +79,22 @@
 - 应用日志和FunASR日志分别存储在用户数据目录
 - 提供`logFunASR()`方法专门记录FunASR相关日志
 - 日志以JSON格式存储，支持结构化查询
-- 嵌入式Python环境通过`ELECTRON_USER_DATA`环境变量获取日志路径
+- Python日志路径通过`ELECTRON_USER_DATA`环境变量传入
 
 ## 关键注意事项
 
 ### 路径解析
 - Vite配置使用`src/`作为基础目录，影响所有相对导入
-- 生产构建引用`app.asar.unpacked`中的Python脚本和嵌入式Python环境
+- 生产构建引用`app.asar.unpacked`中的Python脚本
 - 资源路径从src目录使用`../assets`
-- 嵌入式Python环境路径：
-  - 开发模式：`项目根目录/python/bin/python3.11`
-  - 生产模式：`process.resourcesPath/app.asar.unpacked/python/bin/python3.11`
 
 ### Python集成
-- 使用完全隔离的嵌入式Python环境(Python 3.11.6)
-- 嵌入式环境包含所有必需依赖：numpy<2, torch==2.0.1, torchaudio==2.0.2, librosa>=0.11.0, funasr>=1.2.7
+- 使用`uv`管理Python环境（Python 3.11+）
+- 关键依赖：numpy<2, torch==2.0.1, torchaudio==2.0.2, librosa>=0.11.0, funasr>=1.2.7, evdev
 - FunASR安装需要特定模型版本(v2.0.4)
 - Python进程生成使用`windowsHide: true`选项
-- 完全隔离的环境变量设置：PYTHONHOME, PYTHONPATH, PYTHONDONTWRITEBYTECODE
 - 清除系统Python环境变量干扰：PYTHONUSERBASE, PYTHONSTARTUP, VIRTUAL_ENV
-- macOS代码签名权限配置支持Python扩展和JIT编译(`entitlements.mac.plist`)
+- Wayland自动粘贴链路：`wl-copy` + `ydotool`（需`ydotoold`）
 
 ### 状态管理
 - 无外部状态库 - 使用React hooks配合Electron IPC
@@ -108,19 +103,16 @@
 
 ### 开发vs生产环境
 - 开发模式有2秒延迟等待Vite启动
-- 生产模式使用嵌入式Python环境，无需系统Python依赖
+- Linux模式依赖系统`uv`与Python环境
 - 日志文件位置在开发和生产构建中不同
-- 构建流程自动准备嵌入式Python环境和模型文件
-- 构建产物包含完整的Python运行时(约1GB+)
+- 构建流程自动检查Python依赖与模型
 
 ## 新增功能架构
 
-### 嵌入式Python环境
-- 基于python-build-standalone项目的独立Python运行时
-- 支持macOS ARM64和x86_64架构自动检测
-- 包含完整的科学计算栈：numpy, torch, librosa等
-- 构建时自动下载、安装和验证所有依赖
-- 生产环境完全独立，不依赖系统Python
+### Linux/Wayland 热键与粘贴
+- 全局热键通过`evdev`监听输入设备
+- 自动粘贴通过`wl-copy + ydotool`实现（先写剪贴板，再发送`Ctrl+V`）
+- 提供应用本体CLI接口：`--status` / `--trigger`
 
 ### 模型管理系统
 - 三个核心模型：ASR(语音识别)、VAD(语音活动检测)、PUNC(标点恢复)
@@ -130,7 +122,5 @@
 - 模型状态指示器组件提供可视化反馈
 
 ### 构建系统增强
-- macOS代码签名和公证支持
-- 嵌入式Python环境自动打包
-- 构建前自动准备Python环境和依赖验证
-- 支持清理命令移除Python环境和构建缓存
+- Linux构建前自动准备Python依赖与模型
+- 支持清理命令移除构建缓存

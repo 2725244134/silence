@@ -7,11 +7,13 @@ import { usePermissions } from "./hooks/usePermissions";
 import PermissionCard from "./components/ui/permission-card";
 
 const SettingsPage = () => {
+  const availableHotkeys = ["ALT+D", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"];
   const [settings, setSettings] = useState({
     ai_api_key: "",
     ai_base_url: "https://api.openai.com/v1",
     ai_model: "gpt-3.5-turbo",
-    enable_ai_optimization: true
+    enable_ai_optimization: true,
+    global_hotkey: "ALT+D"
   });
   
   const [customModel, setCustomModel] = useState(false);
@@ -51,7 +53,8 @@ const SettingsPage = () => {
           ai_api_key: allSettings.ai_api_key || "",
           ai_base_url: allSettings.ai_base_url || "https://api.openai.com/v1",
           ai_model: allSettings.ai_model || "gpt-3.5-turbo",
-          enable_ai_optimization: allSettings.enable_ai_optimization !== false // 默认为true
+          enable_ai_optimization: allSettings.enable_ai_optimization !== false, // 默认为true
+          global_hotkey: (allSettings.global_hotkey || "ALT+D").toUpperCase()
         };
         setSettings(prev => ({ ...prev, ...loadedSettings }));
         
@@ -77,6 +80,11 @@ const SettingsPage = () => {
         await window.electronAPI.setSetting('ai_base_url', settings.ai_base_url);
         await window.electronAPI.setSetting('ai_model', settings.ai_model);
         await window.electronAPI.setSetting('enable_ai_optimization', settings.enable_ai_optimization);
+        await window.electronAPI.setSetting('global_hotkey', settings.global_hotkey);
+        const hotkeyResult = await window.electronAPI.registerHotkey(settings.global_hotkey);
+        if (!hotkeyResult?.success) {
+          throw new Error(hotkeyResult?.error || "热键注册失败");
+        }
         
         toast.success("设置保存成功");
       }
@@ -219,7 +227,7 @@ const SettingsPage = () => {
                   权限管理
                 </h2>
                 <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                  测试和管理应用权限，确保麦克风和辅助功能正常工作。
+                  测试和管理应用权限，确保麦克风和 Wayland 自动粘贴链路正常工作。
                 </p>
               </div>
               
@@ -235,12 +243,46 @@ const SettingsPage = () => {
 
                 <PermissionCard
                   icon={Shield}
-                  title="辅助功能权限"
-                  description="自动粘贴文本所需的权限"
+                  title="Wayland 自动粘贴"
+                  description="需要 wl-copy + ydotool + ydotoold"
                   granted={accessibilityPermissionGranted}
                   onRequest={testAccessibilityPermission}
-                  buttonText="测试权限"
+                  buttonText="测试链路"
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* 快捷键设置 */}
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 mb-6">
+            <div className="p-6">
+              <div className="mb-4">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 chinese-title">
+                  全局快捷键
+                </h2>
+                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                  通过 evdev 监听的快捷键，当前支持 ALT+D 与功能键（F1-F12）。
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  热键
+                </label>
+                <select
+                  value={settings.global_hotkey}
+                  onChange={(e) => handleInputChange('global_hotkey', e.target.value.toUpperCase())}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                >
+                  {availableHotkeys.map((hotkey) => (
+                    <option key={hotkey} value={hotkey}>
+                      {hotkey}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  保存后立即生效；若热键注册失败，请检查 evdev 设备权限。
+                </p>
               </div>
             </div>
           </div>

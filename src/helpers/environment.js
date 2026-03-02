@@ -49,7 +49,7 @@ class EnvironmentManager {
       theme: process.env.THEME || "auto",
       windowAlwaysOnTop: process.env.WINDOW_ALWAYS_ON_TOP === "true",
       startMinimized: process.env.START_MINIMIZED === "true",
-      globalHotkey: process.env.GLOBAL_HOTKEY || "CommandOrControl+Shift+Space",
+      globalHotkey: process.env.GLOBAL_HOTKEY || "ALT+D",
     };
   }
 
@@ -102,17 +102,7 @@ class EnvironmentManager {
 
   getDataDirectory() {
     const appName = "蛐蛐";
-    
-    switch (process.platform) {
-      case "win32":
-        return path.join(os.homedir(), "AppData", "Roaming", appName);
-      case "darwin":
-        return path.join(os.homedir(), "Library", "Application Support", appName);
-      case "linux":
-        return path.join(os.homedir(), ".config", appName);
-      default:
-        return path.join(os.homedir(), `.${appName.toLowerCase()}`);
-    }
+    return path.join(os.homedir(), ".config", appName);
   }
 
   ensureDataDirectory() {

@@ -45,7 +45,7 @@ const SettingsPanel = ({ onClose }) => {
               权限管理
             </h3>
             <p className="text-sm text-gray-600 mb-6">
-              测试和管理应用权限，确保麦克风和辅助功能正常工作。
+              测试和管理应用权限，确保麦克风和 Wayland 自动粘贴链路正常工作。
             </p>
             
             <div className="space-y-4">
@@ -60,11 +60,11 @@ const SettingsPanel = ({ onClose }) => {
 
               <PermissionCard
                 icon={Shield}
-                title="辅助功能权限"
-                description="自动粘贴文本所需的权限"
+                title="Wayland 自动粘贴"
+                description="需要 wl-copy + ydotool + ydotoold"
                 granted={accessibilityPermissionGranted}
                 onRequest={testAccessibilityPermission}
-                buttonText="测试权限"
+                buttonText="测试链路"
               />
             </div>
           </div>

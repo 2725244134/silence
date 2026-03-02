@@ -1,6 +1,5 @@
-const { app, globalShortcut, BrowserWindow, ipcMain } = require("electron");
-const path = require("path");
-const { spawn } = require("child_process");
+const { app, BrowserWindow } = require("electron");
+const net = require("net");
 
 // 导入日志管理器
 const LogManager = require("./src/helpers/logManager");
@@ -30,6 +29,94 @@ const FunASRManager = require("./src/helpers/funasrManager");
 const TrayManager = require("./src/helpers/tray");
 const HotkeyManager = require("./src/helpers/hotkeyManager");
 const IPCHandlers = require("./src/helpers/ipcHandlers");
+const CliTriggerServer = require("./src/helpers/cliTriggerServer");
+
+function resolveCliCommand(argv) {
+  const args = (argv || []).slice(1).map((arg) => String(arg).toLowerCase());
+
+  if (args.includes("--trigger") || args.includes("trigger")) {
+    return "trigger";
+  }
+
+  if (args.includes("--status") || args.includes("status")) {
+    return "status";
+  }
+
+  return null;
+}
+
+async function runCliCommand(command) {
+  const socketPath = CliTriggerServer.getSocketPath();
+  const request = command === "trigger" ? "trigger" : "status";
+
+  return new Promise((resolve) => {
+    let finished = false;
+    const done = (code) => {
+      if (finished) return;
+      finished = true;
+      resolve(code);
+    };
+
+    const client = net.createConnection(socketPath);
+    let output = "";
+
+    const timeoutId = setTimeout(() => {
+      client.destroy();
+      console.error(
+        JSON.stringify({
+          success: false,
+          error: "CLI 请求超时",
+          socket: socketPath,
+        })
+      );
+      done(1);
+    }, 3000);
+
+    client.on("connect", () => {
+      client.write(`${request}\n`);
+    });
+
+    client.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+
+    client.on("end", () => {
+      clearTimeout(timeoutId);
+      const text = output.trim();
+      if (!text) {
+        console.error(JSON.stringify({ success: false, error: "空响应", socket: socketPath }));
+        done(2);
+        return;
+      }
+
+      try {
+        const payload = JSON.parse(text);
+        if (payload.success) {
+          console.log(JSON.stringify(payload));
+          done(0);
+          return;
+        }
+        console.error(JSON.stringify(payload));
+        done(1);
+      } catch (_error) {
+        console.log(text);
+        done(0);
+      }
+    });
+
+    client.on("error", (error) => {
+      clearTimeout(timeoutId);
+      console.error(
+        JSON.stringify({
+          success: false,
+          error: `无法连接到 QuQu CLI socket: ${socketPath}`,
+          detail: error.message,
+        })
+      );
+      done(1);
+    });
+  });
+}
 
 // 设置生产环境PATH
 function setupProductionPath() {
@@ -39,105 +126,70 @@ function setupProductionPath() {
     currentPath: process.env.PATH
   });
 
-  if (process.platform === 'darwin' && process.env.NODE_ENV !== 'development') {
-    const commonPaths = [
-      '/usr/local/bin',
-      '/opt/homebrew/bin',
-      '/usr/bin',
-      '/bin',
-      '/usr/sbin',
-      '/sbin',
-      '/Library/Frameworks/Python.framework/Versions/3.12/bin',
-      '/Library/Frameworks/Python.framework/Versions/3.11/bin',
-      '/Library/Frameworks/Python.framework/Versions/3.10/bin',
-      '/Library/Frameworks/Python.framework/Versions/3.9/bin',
-      '/Library/Frameworks/Python.framework/Versions/3.8/bin',
-      // 添加更多可能的Python路径
-      '/opt/homebrew/opt/python@3.11/bin',
-      '/opt/homebrew/opt/python@3.10/bin',
-      '/opt/homebrew/opt/python@3.9/bin',
-      '/usr/local/opt/python@3.11/bin',
-      '/usr/local/opt/python@3.10/bin',
-      '/usr/local/opt/python@3.9/bin'
-    ];
-    
-    const currentPath = process.env.PATH || '';
-    const pathsToAdd = commonPaths.filter(p => !currentPath.includes(p));
-    
-    if (pathsToAdd.length > 0) {
-      const newPath = `${currentPath}:${pathsToAdd.join(':')}`;
-      process.env.PATH = newPath;
-      logger.info('PATH已更新', {
-        添加的路径: pathsToAdd,
-        新PATH: newPath
-      });
-    } else {
-      logger.info('PATH无需更新，所有路径已存在');
-    }
-  } else if (process.platform === 'win32' && process.env.NODE_ENV !== 'development') {
-    // Windows平台的Python路径设置
-    const commonPaths = [
-      'C:\\Python311\\Scripts',
-      'C:\\Python311',
-      'C:\\Python310\\Scripts',
-      'C:\\Python310',
-      'C:\\Python39\\Scripts',
-      'C:\\Python39',
-      'C:\\Users\\' + require('os').userInfo().username + '\\AppData\\Local\\Programs\\Python\\Python311\\Scripts',
-      'C:\\Users\\' + require('os').userInfo().username + '\\AppData\\Local\\Programs\\Python\\Python311',
-      'C:\\Users\\' + require('os').userInfo().username + '\\AppData\\Local\\Programs\\Python\\Python310\\Scripts',
-      'C:\\Users\\' + require('os').userInfo().username + '\\AppData\\Local\\Programs\\Python\\Python310'
-    ];
-    
-    const currentPath = process.env.PATH || '';
-    const pathsToAdd = commonPaths.filter(p => !currentPath.includes(p));
-    
-    if (pathsToAdd.length > 0) {
-      const newPath = `${currentPath};${pathsToAdd.join(';')}`;
-      process.env.PATH = newPath;
-      logger.info('Windows PATH已更新', {
-        添加的路径: pathsToAdd,
-        新PATH: newPath
-      });
-    }
+  if (process.env.NODE_ENV === 'development') {
+    return;
   }
+
+  const commonPaths = ['/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+  const currentPath = process.env.PATH || '';
+  const pathsToAdd = commonPaths.filter(p => !currentPath.includes(p));
+
+  if (pathsToAdd.length === 0) {
+    return;
+  }
+
+  const newPath = `${currentPath}:${pathsToAdd.join(':')}`;
+  process.env.PATH = newPath;
+  logger.info('PATH已更新', {
+    添加的路径: pathsToAdd,
+    新PATH: newPath
+  });
 }
 
-// 在初始化管理器之前设置PATH
-setupProductionPath();
+const cliCommand = resolveCliCommand(process.argv);
 
-// 设置用户数据目录环境变量，供Python脚本使用
-process.env.ELECTRON_USER_DATA = app.getPath('userData');
-logger.info('设置用户数据目录环境变量', {
-  ELECTRON_USER_DATA: process.env.ELECTRON_USER_DATA
-});
+if (cliCommand) {
+  runCliCommand(cliCommand).then((code) => {
+    process.exit(code);
+  });
+} else {
+  // 在初始化管理器之前设置PATH
+  setupProductionPath();
 
-// 初始化管理器
-const environmentManager = new EnvironmentManager();
-const windowManager = new WindowManager();
-const databaseManager = new DatabaseManager();
-const clipboardManager = new ClipboardManager(logger); // 传递logger实例
-const funasrManager = new FunASRManager(logger); // 传递logger实例
-const trayManager = new TrayManager();
-const hotkeyManager = new HotkeyManager();
+  // 设置用户数据目录环境变量，供Python脚本使用
+  process.env.ELECTRON_USER_DATA = app.getPath('userData');
+  logger.info('设置用户数据目录环境变量', {
+    ELECTRON_USER_DATA: process.env.ELECTRON_USER_DATA
+  });
 
-// 初始化数据库
-const dataDirectory = environmentManager.ensureDataDirectory();
-databaseManager.initialize(dataDirectory);
+  // 初始化管理器
+  const environmentManager = new EnvironmentManager();
+  const windowManager = new WindowManager();
+  const databaseManager = new DatabaseManager();
+  const clipboardManager = new ClipboardManager(logger); // 传递logger实例
+  const funasrManager = new FunASRManager(logger); // 传递logger实例
+  const trayManager = new TrayManager();
+  const hotkeyManager = new HotkeyManager(logger);
+  const cliTriggerServer = new CliTriggerServer(logger);
 
-// 使用所有管理器初始化IPC处理器
-const ipcHandlers = new IPCHandlers({
-  environmentManager,
-  databaseManager,
-  clipboardManager,
-  funasrManager,
-  windowManager,
-  hotkeyManager,
-  logger, // 传递logger实例
-});
+  // 初始化数据库
+  const dataDirectory = environmentManager.ensureDataDirectory();
+  databaseManager.initialize(dataDirectory);
 
-// 主应用启动函数
-async function startApp() {
+  // 使用所有管理器初始化IPC处理器
+  const ipcHandlers = new IPCHandlers({
+    environmentManager,
+    databaseManager,
+    clipboardManager,
+    funasrManager,
+    windowManager,
+    hotkeyManager,
+    cliTriggerServer,
+    logger, // 传递logger实例
+  });
+
+  // 主应用启动函数
+  async function startApp() {
   logger.info('应用启动开始', {
     nodeEnv: process.env.NODE_ENV,
     platform: process.platform,
@@ -161,12 +213,6 @@ async function startApp() {
   if (process.env.NODE_ENV === "development") {
     logger.info('开发模式，等待Vite启动...');
     await new Promise((resolve) => setTimeout(resolve, 2000));
-  }
-
-  // 确保macOS上dock可见
-  if (process.platform === 'darwin' && app.dock) {
-    app.dock.show();
-    logger.info('macOS Dock已显示');
   }
 
   // 在启动时初始化FunASR管理器（不等待以避免阻塞）
@@ -205,38 +251,51 @@ async function startApp() {
   await trayManager.createTray();
   logger.info('系统托盘设置完成');
 
+  // 启动 CLI 触发服务（Linux/Wayland）
+  cliTriggerServer.setTriggerHandler((payload) => {
+    if (windowManager.mainWindow && !windowManager.mainWindow.isDestroyed()) {
+      windowManager.mainWindow.webContents.send("hotkey-triggered", {
+        hotkey: "CLI_TRIGGER",
+        ...payload,
+      });
+    }
+  });
+  const socketPath = cliTriggerServer.start();
+  logger.info("CLI trigger 服务已启动", { socketPath });
+
   logger.info('应用启动完成');
-}
+  }
 
-// 应用事件处理器
-app.whenReady().then(() => {
-  startApp();
-});
+  // 应用事件处理器
+  app.whenReady().then(() => {
+    startApp();
+  });
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  app.on("window-all-closed", () => {
     app.quit();
-  }
-});
+  });
 
-app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    windowManager.createMainWindow();
-  }
-});
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      windowManager.createMainWindow();
+    }
+  });
 
-app.on("will-quit", () => {
-  globalShortcut.unregisterAll();
-});
+  app.on("will-quit", () => {
+    hotkeyManager.unregisterAllHotkeys();
+    cliTriggerServer.stop();
+  });
 
-// 导出管理器供其他模块使用
-module.exports = {
-  environmentManager,
-  windowManager,
-  databaseManager,
-  clipboardManager,
-  funasrManager,
-  trayManager,
-  hotkeyManager,
-  logger
-};
+  // 导出管理器供其他模块使用
+  module.exports = {
+    environmentManager,
+    windowManager,
+    databaseManager,
+    clipboardManager,
+    funasrManager,
+    trayManager,
+    hotkeyManager,
+    cliTriggerServer,
+    logger
+  };
+}
